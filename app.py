@@ -199,7 +199,7 @@ if archivo_subido:
             st.plotly_chart(fig_pie_cont, use_container_width=True)
 
         with col_fuga2:
-            # Top Motivos No Venta (Sin la apertura de No Conecta)
+            # Top Motivos No Venta
             if not df_no_ventas.empty:
                 motivos_nv = df_no_ventas['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index().head(10)
                 motivos_nv.columns = ['Motivo', 'Cantidad']
@@ -236,7 +236,7 @@ if archivo_subido:
 
         st.dataframe(ranking, use_container_width=True, hide_index=True)
 
-        # --- CHAT GEMINI CON VISOR DE ERRORES REALES ---
+        # --- CHAT GEMINI (SELECCIÓN DINÁMICA DE MODELO) ---
         st.markdown("---")
         st.subheader("🤖 Consultar a Gemini")
         if ia_activa:
@@ -249,10 +249,24 @@ if archivo_subido:
                 
                 with st.chat_message("assistant"):
                     try:
-                        # SOLUCIÓN DEFINITIVA AL ERROR 404: Cambiado a gemini-pro
-                        modelo = genai.GenerativeModel('gemini-pro')
-                        respuesta = modelo.generate_content(contexto)
-                        st.write(respuesta.text)
+                        # SOLUCIÓN ANTIBALA: Le pedimos a Google los modelos que SÍ funcionan con tu API Key
+                        modelos_disponibles = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                        
+                        if not modelos_disponibles:
+                            st.error("🚨 Tu API Key no tiene permisos para usar modelos generativos.")
+                        else:
+                            # Elegimos por defecto el primero que esté habilitado y lo usamos
+                            modelo_elegido = modelos_disponibles[0] 
+                            
+                            # Si podemos usar flash (el más rápido), lo priorizamos
+                            for m in modelos_disponibles:
+                                if '1.5-flash' in m:
+                                    modelo_elegido = m
+                                    break
+                            
+                            modelo = genai.GenerativeModel(modelo_elegido)
+                            respuesta = modelo.generate_content(contexto)
+                            st.write(respuesta.text)
                     except Exception as e:
                         st.error(f"🚨 DETALLE TÉCNICO DEL ERROR: {str(e)}")
         else:
