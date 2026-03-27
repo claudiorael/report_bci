@@ -8,7 +8,6 @@ import datetime
 # --- CONFIGURACIÓN DE PÁGINA (TEMA CLARO) ---
 st.set_page_config(page_title="Dashboard Recaall", layout="wide", initial_sidebar_state="expanded")
 
-# CSS mínimo para forzar un fondo blanco/claro y texto oscuro
 st.markdown("""
     <style>
     .stApp { background-color: #FFFFFF; color: #31333F; }
@@ -25,13 +24,11 @@ def procesar_datos(file):
     try:
         df = pd.read_csv(file, sep=';')
         
-        # Limpieza de tiempos y creación de columnas temporales
         df['datetime'] = pd.to_datetime(df['GES_fecha_creacion'] + ' ' + df['GES_hora_min_creacion'], dayfirst=True)
         df['Hora'] = df['datetime'].dt.hour
         df['Día'] = df['datetime'].dt.date
         df['Semana'] = df['datetime'].dt.isocalendar().week
         
-        # REGLA EXACTA: Solo contabiliza cuando dice exactamente "venta" (536 registros)
         df['es_venta'] = (df['GES_descripcion_3'].fillna('').str.strip().str.lower() == 'venta').astype(int)
         
         return df
@@ -65,7 +62,6 @@ if archivo_subido:
     if df is not None:
         st.title("📊 Dashboard de Gestión de Ventas")
         
-        # Filtros y Botón de Excel
         c_f1, c_f2, c_f3 = st.columns(3)
         with c_f1:
             campanas = st.multiselect("Campaña", df['GES_nombre_campana_gestion'].unique(), default=df['GES_nombre_campana_gestion'].unique())
@@ -91,7 +87,6 @@ if archivo_subido:
 
         st.markdown("---")
 
-        # --- MÉTRICAS ---
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Llamados", len(df_final))
         m2.metric("Ventas Totales", df_final['es_venta'].sum()) 
@@ -101,10 +96,9 @@ if archivo_subido:
 
         st.markdown("---")
 
-        # --- SELECCIÓN Y GRÁFICO DINÁMICO ---
-        st.subheader("Desempeño Operativo")
+        # --- GRÁFICO DE DESEMPEÑO (BARRAS GRISES CON TEXTO) ---
+        st.subheader("Desempeño Operativo (Volumen y Éxito)")
         
-        # Nuevo selector para elegir el tipo de vista
         vista = st.radio("Selecciona el nivel de detalle:", ["Resumen General por Día", "Detalle por Hora (Filtrar por Día)"], horizontal=True)
         
         fig_barras = None
@@ -113,40 +107,110 @@ if archivo_subido:
         if vista == "Resumen General por Día":
             resumen_temp = df_final.groupby('Día').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
             resumen_temp['Día'] = resumen_temp['Día'].astype(str)
+            resumen_temp['% Conv'] = (resumen_temp['Ventas'] / resumen_temp['Llamados'] * 100).fillna(0).round(1)
+            resumen_temp['Etiqueta'] = resumen_temp['% Conv'].astype(str) + '%'
             
-            fig_barras = px.bar(resumen_temp, x='Día', y=['Llamados', 'Ventas'], 
-                                barmode='group', title="Llamados vs Ventas Totales por Día",
-                                labels={'value': 'Cantidad', 'Día': 'Fecha'},
-                                color_discrete_sequence=['#636EFA', '#EF553B'])
+            fig_barras = px.bar(
+                resumen_temp, x='Día', y='Llamados', text='Etiqueta',
+                title="Volumen de Gestiones y Porcentaje de Conversión por Día",
+                labels={'Llamados': 'Total Llamados', 'Día': 'Fecha'},
+                color_discrete_sequence=['#CED4DA'], 
+                hover_data={'Ventas': True, '% Conv': True, 'Etiqueta': False}
+            )
             
-        else: # Si selecciona "Detalle por Hora"
+        else: 
             dias_disponibles = sorted(df_final['Día'].unique())
             
             if len(dias_disponibles) > 0:
-                # Menú desplegable para elegir el día exacto
                 dia_seleccionado = st.selectbox("📅 Selecciona un día específico:", dias_disponibles)
-                
-                # Filtramos la data solo para el día que se seleccionó
                 df_dia = df_final[df_final['Día'] == dia_seleccionado]
                 
-                # Agrupamos por hora
                 resumen_temp = df_dia.groupby('Hora').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
-                resumen_temp['Hora'] = resumen_temp['Hora'].astype(str) + ":00" # Formato bonito "09:00"
+                resumen_temp['Hora'] = resumen_temp['Hora'].astype(str) + ":00" 
                 
-                fig_barras = px.bar(resumen_temp, x='Hora', y=['Llamados', 'Ventas'], 
-                                    barmode='group', title=f"Desempeño por Hora (Día: {dia_seleccionado})",
-                                    labels={'value': 'Cantidad', 'Hora': 'Hora del Día'},
-                                    color_discrete_sequence=['#636EFA', '#EF553B'])
+                resumen_temp['% Conv'] = (resumen_temp['Ventas'] / resumen_temp['Llamados'] * 100).fillna(0).round(1)
+                resumen_temp['Etiqueta'] = resumen_temp['% Conv'].astype(str) + '%'
+                
+                fig_barras = px.bar(
+                    resumen_temp, x='Hora', y='Llamados', text='Etiqueta',
+                    title=f"Volumen y Conversión por Hora (Día: {dia_seleccionado})",
+                    labels={'Llamados': 'Total Llamados', 'Hora': 'Franja Horaria'},
+                    color_discrete_sequence=['#CED4DA'], 
+                    hover_data={'Ventas': True, '% Conv': True, 'Etiqueta': False}
+                )
             else:
                 st.warning("No hay datos disponibles para la selección actual.")
 
-        # Dibujamos el gráfico si existe
         if fig_barras is not None:
-            fig_barras.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+            fig_barras.update_traces(textposition='auto', textfont=dict(size=14, color='#212529', family="Arial Black"))
+            fig_barras.update_layout(paper_bgcolor="white", plot_bgcolor="white", hovermode="x unified")
             st.plotly_chart(fig_barras, use_container_width=True)
 
 
+        # --- NUEVA SECCIÓN: ANÁLISIS DE FUGAS (NO VENTAS) ---
+        st.markdown("---")
+        st.subheader("🛑 Análisis de Fugas (Motivos de No Venta)")
+        
+        df_no_ventas = df_final[df_final['es_venta'] == 0]
+        
+        if not df_no_ventas.empty:
+            col_fuga1, col_fuga2 = st.columns([2, 1])
+            
+            with col_fuga1:
+                # Top 10 motivos de rechazo
+                motivos = df_no_ventas['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index()
+                motivos.columns = ['Motivo', 'Cantidad']
+                motivos_top = motivos.head(10)
+                
+                fig_fugas = px.bar(
+                    motivos_top, x='Cantidad', y='Motivo', orientation='h',
+                    title="Top 10 Razones de Falla",
+                    text='Cantidad',
+                    color_discrete_sequence=['#EF553B'] # Rojo para destacar que es un bloqueo
+                )
+                fig_fugas.update_traces(textposition='outside', textfont=dict(size=12, color='#212529'))
+                fig_fugas.update_layout(
+                    yaxis={'categoryorder':'total ascending'}, # Ordena para que el mayor quede arriba
+                    paper_bgcolor="white", plot_bgcolor="white",
+                    margin=dict(l=0, r=20, t=40, b=0)
+                )
+                st.plotly_chart(fig_fugas, use_container_width=True)
+                
+            with col_fuga2:
+                # Tasa de Contactabilidad (Conecta vs No Conecta)
+                st.markdown("#### Nivel de Contactabilidad")
+                st.caption("Proporción de llamadas que lograron conexión real con un cliente.")
+                
+                # Buscamos la palabra "Conecta" en la descripción 1
+                df_final['Contactó'] = df_final['GES_descripcion_1'].fillna('').str.contains('Conecta', case=False)
+                contactabilidad = df_final['Contactó'].value_counts().reset_index()
+                contactabilidad.columns = ['Conectó', 'Cantidad']
+                contactabilidad['Estado'] = contactabilidad['Conectó'].apply(lambda x: 'Contacto Efectivo' if x else 'Sin Contacto')
+                
+                fig_pie_cont = px.pie(
+                    contactabilidad, values='Cantidad', names='Estado',
+                    hole=0.6,
+                    color='Estado',
+                    color_discrete_map={'Contacto Efectivo': '#636EFA', 'Sin Contacto': '#CED4DA'}
+                )
+                fig_pie_cont.update_layout(
+                    showlegend=True, 
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                    paper_bgcolor="white", plot_bgcolor="white", 
+                    margin=dict(t=10, b=0, l=0, r=0)
+                )
+                
+                # Agregamos el % de contactabilidad en el centro del anillo
+                tasa_cont = (df_final['Contactó'].sum() / len(df_final) * 100) if len(df_final) > 0 else 0
+                fig_pie_cont.add_annotation(text=f"{tasa_cont:.1f}%", x=0.5, y=0.5, showarrow=False, font_size=24, font_color='#212529')
+                
+                st.plotly_chart(fig_pie_cont, use_container_width=True)
+        else:
+            st.success("No hay registros de llamadas sin venta en la selección actual.")
+
+
         # --- TABLA DE DETALLE ---
+        st.markdown("---")
         st.subheader("Detalle de Conversión por Ejecutivo")
         ranking = df_final.groupby('GES_username_recurso').agg(
             Llamados=('es_venta', 'count'),
@@ -177,7 +241,6 @@ if archivo_subido:
                 with st.chat_message("user"):
                     st.write(pregunta)
                 
-                # Contexto dinámico
                 if resumen_temp is not None:
                     contexto = f"Datos del gráfico en pantalla: \n{resumen_temp.to_string()}\nRanking Ejecutivos: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
                 else:
@@ -185,7 +248,6 @@ if archivo_subido:
                 
                 with st.chat_message("assistant"):
                     try:
-                        # CORRECCIÓN DE ERROR 404: Se cambió a gemini-pro
                         modelo = genai.GenerativeModel('gemini-pro')
                         respuesta = modelo.generate_content(contexto)
                         st.write(respuesta.text)
