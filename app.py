@@ -30,6 +30,7 @@ def procesar_datos(file):
         df['Día'] = df['datetime'].dt.date
         df['Semana'] = df['datetime'].dt.isocalendar().week
         
+        # Filtro estricto para las ventas
         df['es_venta'] = (df['GES_descripcion_3'].fillna('').str.strip().str.lower() == 'venta').astype(int)
         
         return df
@@ -63,6 +64,7 @@ if archivo_subido:
     if df is not None:
         st.title("📊 Dashboard de Gestión de Ventas")
         
+        # Filtros y Excel
         c_f1, c_f2, c_f3 = st.columns(3)
         with c_f1:
             campanas = st.multiselect("Campaña", df['GES_nombre_campana_gestion'].unique(), default=df['GES_nombre_campana_gestion'].unique())
@@ -88,6 +90,7 @@ if archivo_subido:
 
         st.markdown("---")
 
+        # Métricas Cabecera
         m1, m2, m3, m4 = st.columns(4)
         total_llamados = len(df_final)
         total_ventas = df_final['es_venta'].sum()
@@ -109,7 +112,7 @@ if archivo_subido:
         resumen_temp = None
 
         if vista == "Resumen General por Día":
-            st.markdown(f"<div class='metric-small'>Total de ventas en el periodo: {total_ventas}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-small'>Total de ventas en la selección: {total_ventas}</div>", unsafe_allow_html=True)
             
             resumen_temp = df_final.groupby('Día').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
             resumen_temp['Día'] = resumen_temp['Día'].astype(str)
@@ -160,18 +163,16 @@ if archivo_subido:
         st.markdown("---")
         st.subheader("🛑 Análisis de Fugas y Contactabilidad")
         
-        # Filtros de descripción para No Venta y No Conecta
         df_no_ventas = df_final[df_final['es_venta'] == 0]
         df_no_conecta = df_final[df_final['GES_descripcion_1'].fillna('').str.contains('No conecta', case=False)]
         
         col_fuga1, col_fuga2, col_fuga3 = st.columns(3)
         
         with col_fuga1:
-            # SOLUCIÓN DE CONTACTABILIDAD: Solo suma si la frase COMIENZA con "Conecta"
+            # Contactabilidad Estricta
             contactos_efectivos = df_final['GES_descripcion_1'].fillna('').str.startswith('Conecta').sum()
             tasa_cont = (contactos_efectivos / total_llamados * 100) if total_llamados > 0 else 0
             
-            # DataFrame para el gráfico de torta
             data_pie = pd.DataFrame({
                 'Estado': ['Contacto Efectivo', 'Sin Contacto / Otros'],
                 'Cantidad': [contactos_efectivos, total_llamados - contactos_efectivos]
@@ -192,7 +193,7 @@ if archivo_subido:
             st.plotly_chart(fig_pie_cont, use_container_width=True)
 
         with col_fuga2:
-            # Motivos generales de No Venta (Top 10)
+            # Top Motivos No Venta
             if not df_no_ventas.empty:
                 motivos_nv = df_no_ventas['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index().head(10)
                 motivos_nv.columns = ['Motivo', 'Cantidad']
@@ -207,7 +208,7 @@ if archivo_subido:
                 st.plotly_chart(fig_nv, use_container_width=True)
 
         with col_fuga3:
-            # Apertura de motivos de "No Conecta"
+            # Apertura de No Conecta
             if not df_no_conecta.empty:
                 motivos_nc = df_no_conecta['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index().head(10)
                 motivos_nc.columns = ['Motivo', 'Cantidad']
@@ -246,7 +247,7 @@ if archivo_subido:
         st.dataframe(ranking, use_container_width=True, hide_index=True)
 
 
-        # --- CHAT GEMINI CON FALLBACK DE MODELOS ---
+        # --- CHAT GEMINI CON FALLBACK ---
         st.markdown("---")
         st.subheader("🤖 Consultar a Gemini")
         if ia_activa:
@@ -265,11 +266,12 @@ if archivo_subido:
                     except Exception as e:
                         if "404" in str(e):
                             try:
-                                modelo = genai.GenerativeModel('gemini-1.0-pro')
+                                # Fallback a modelo anterior si la librería en Streamlit Cloud no está actualizada
+                                modelo = genai.GenerativeModel('gemini-pro')
                                 respuesta = modelo.generate_content(contexto)
                                 st.write(respuesta.text)
                             except:
-                                st.error("⚠️ La versión de tu librería de Gemini es muy antigua para conectar. Por favor, abre tu terminal y ejecuta: pip install --upgrade google-generativeai")
+                                st.error("⚠️ Error interno de conexión con la IA. Es posible que Streamlit Cloud esté reiniciando las dependencias.")
                         else:
                             st.error(f"Error conectando con Gemini: {e}")
         else:
