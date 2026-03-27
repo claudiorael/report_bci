@@ -25,14 +25,11 @@ def procesar_datos(file):
     try:
         df = pd.read_csv(file, sep=';')
         
-        # 1. Lectura flexible pero segura. Si hay basura, la convierte en nulo (coerce)
+        # Lectura flexible y limpieza de fechas corruptas
         df['datetime'] = pd.to_datetime(df['GES_fecha_creacion'] + ' ' + df['GES_hora_min_creacion'], dayfirst=True, errors='coerce')
-        
-        # 2. Eliminamos cualquier fila vacía o corrupta que haya generado "NaT"
         df = df.dropna(subset=['datetime'])
         
         df['Hora'] = df['datetime'].dt.hour
-        # Lo convertimos explícitamente a string para que el menú de Streamlit lo lea limpio sin NaT
         df['Día'] = df['datetime'].dt.date.astype(str) 
         df['Semana'] = df['datetime'].dt.isocalendar().week
         
@@ -44,7 +41,7 @@ def procesar_datos(file):
         st.error(f"Error en el formato del archivo subido: {e}")
         return None
 
-# --- OPTIMIZACIÓN DE VELOCIDAD 2: CACHÉ PARA EXCEL ---
+# --- CACHÉ PARA EXCEL ---
 @st.cache_data
 def generar_excel(df):
     output = BytesIO()
@@ -52,12 +49,12 @@ def generar_excel(df):
         df.to_excel(writer, index=False, sheet_name='Reporte_Filtrado')
     return output.getvalue()
 
-# --- CONFIGURACIÓN DE IA (SECRETS) ---
+# --- CONFIGURACIÓN DE IA (SECRETS EN LA NUBE) ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
     ia_activa = True
-except KeyError:
+except Exception:
     ia_activa = False
 
 # --- SIDEBAR ---
@@ -69,7 +66,7 @@ with st.sidebar:
     if ia_activa:
         st.success("🤖 Asistente IA Conectado")
     else:
-        st.error("⚠️ Asistente IA Desconectado (Falta API Key)")
+        st.error("⚠️ Asistente IA Desconectado (Revisa los Secrets en Streamlit Cloud)")
 
 # --- CUERPO PRINCIPAL ---
 if archivo_subido:
@@ -89,9 +86,7 @@ if archivo_subido:
             if ejecutivos:
                 df_final = df_final[df_final['GES_username_recurso'].isin(ejecutivos)]
             
-            # Usar la función cacheada
             excel_data = generar_excel(df_final)
-            
             st.write("##") 
             st.download_button(
                 label="📥 Descargar a Excel",
@@ -177,7 +172,6 @@ if archivo_subido:
         
         df_no_ventas = df_final[df_final['es_venta'] == 0]
         
-        # Cambiamos a 2 columnas para que los gráficos tengan más espacio
         col_fuga1, col_fuga2 = st.columns(2)
         
         with col_fuga1:
@@ -196,11 +190,7 @@ if archivo_subido:
                 color='Estado',
                 color_discrete_map={'Contacto Efectivo': '#636EFA', 'Sin Contacto / Otros': '#CED4DA'}
             )
-            fig_pie_cont.update_layout(
-                showlegend=True, 
-                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
-                paper_bgcolor="white", plot_bgcolor="white", margin=dict(t=30, b=0, l=0, r=0)
-            )
+            fig_pie_cont.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5), paper_bgcolor="white", plot_bgcolor="white", margin=dict(t=30, b=0, l=0, r=0))
             fig_pie_cont.add_annotation(text=f"{tasa_cont:.1f}%", x=0.5, y=0.5, showarrow=False, font_size=20, font_color='#212529')
             st.plotly_chart(fig_pie_cont, use_container_width=True)
 
@@ -223,10 +213,7 @@ if archivo_subido:
         st.markdown("---")
         st.subheader("👨‍💼 Análisis de Rendimiento de Ejecutivos")
         
-        ranking = df_final.groupby('GES_username_recurso').agg(
-            Llamados=('es_venta', 'count'),
-            Ventas=('es_venta', 'sum')
-        ).reset_index()
+        ranking = df_final.groupby('GES_username_recurso').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
         ranking['Eficiencia %'] = (ranking['Ventas'] / ranking['Llamados'] * 100).round(2)
         ranking = ranking.sort_values(by='Ventas', ascending=False)
         
@@ -242,8 +229,7 @@ if archivo_subido:
 
         st.dataframe(ranking, use_container_width=True, hide_index=True)
 
-
-        # --- CHAT GEMINI CON VISOR DE ERRORES REALES ---
+        # --- CHAT GEMINI ---
         st.markdown("---")
         st.subheader("🤖 Consultar a Gemini")
         if ia_activa:
@@ -255,15 +241,15 @@ if archivo_subido:
                 contexto = f"Ranking Ejecutivos: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
                 
                 with st.chat_message("assistant"):
-                    # Aquí está el cambio: Ahora si falla, te mostrará el error exacto y sin filtros
                     try:
+                        # Utilizamos la versión estable para evitar fallos 404
                         modelo = genai.GenerativeModel('gemini-1.5-flash')
                         respuesta = modelo.generate_content(contexto)
                         st.write(respuesta.text)
                     except Exception as e:
-                        st.error(f"🚨 DETALLE TÉCNICO DEL ERROR: {str(e)}")
+                        st.error(f"🚨 ERROR: {str(e)}\n\n👉 PARA SOLUCIONARLO: Asegúrate de que tu archivo requirements.txt en GitHub diga exactamente: google-generativeai>=0.5.0")
         else:
-            st.warning("Ingresa tu API Key en la configuración para usar el chat.")
+            st.warning("⚠️ La IA no está conectada. Revisa los 'Secrets' en Streamlit Cloud.")
 
 else:
     st.title("📊 Dashboard de Gestión BCI")
