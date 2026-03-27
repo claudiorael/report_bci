@@ -176,9 +176,9 @@ if archivo_subido:
         st.subheader("🛑 Análisis de Fugas y Contactabilidad")
         
         df_no_ventas = df_final[df_final['es_venta'] == 0]
-        df_no_conecta = df_final[df_final['GES_descripcion_1'].fillna('').str.contains('No conecta', case=False)]
         
-        col_fuga1, col_fuga2, col_fuga3 = st.columns(3)
+        # Cambiamos a 2 columnas para que los gráficos tengan más espacio
+        col_fuga1, col_fuga2 = st.columns(2)
         
         with col_fuga1:
             # Contactabilidad Estricta
@@ -219,22 +219,6 @@ if archivo_subido:
                 fig_nv.update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=0, r=20, t=30, b=0))
                 st.plotly_chart(fig_nv, use_container_width=True)
 
-        with col_fuga3:
-            # Apertura de No Conecta
-            if not df_no_conecta.empty:
-                motivos_nc = df_no_conecta['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index().head(10)
-                motivos_nc.columns = ['Motivo', 'Cantidad']
-                
-                fig_nc = px.bar(
-                    motivos_nc, x='Cantidad', y='Motivo', orientation='h',
-                    title="Apertura: Por qué No Conecta", text='Cantidad',
-                    color_discrete_sequence=['#FFA15A'] 
-                )
-                fig_nc.update_traces(textposition='outside', textfont=dict(size=11, color='#212529'))
-                fig_nc.update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=0, r=20, t=30, b=0))
-                st.plotly_chart(fig_nc, use_container_width=True)
-
-
         # --- TABLA Y RENDIMIENTO DEL EJECUTIVO ---
         st.markdown("---")
         st.subheader("👨‍💼 Análisis de Rendimiento de Ejecutivos")
@@ -259,7 +243,7 @@ if archivo_subido:
         st.dataframe(ranking, use_container_width=True, hide_index=True)
 
 
-        # --- CHAT GEMINI CON FALLBACK ---
+        # --- CHAT GEMINI CON VISOR DE ERRORES REALES ---
         st.markdown("---")
         st.subheader("🤖 Consultar a Gemini")
         if ia_activa:
@@ -271,21 +255,13 @@ if archivo_subido:
                 contexto = f"Ranking Ejecutivos: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
                 
                 with st.chat_message("assistant"):
+                    # Aquí está el cambio: Ahora si falla, te mostrará el error exacto y sin filtros
                     try:
                         modelo = genai.GenerativeModel('gemini-1.5-flash')
                         respuesta = modelo.generate_content(contexto)
                         st.write(respuesta.text)
                     except Exception as e:
-                        if "404" in str(e):
-                            try:
-                                # Fallback a modelo anterior si la librería en Streamlit Cloud no está actualizada
-                                modelo = genai.GenerativeModel('gemini-pro')
-                                respuesta = modelo.generate_content(contexto)
-                                st.write(respuesta.text)
-                            except:
-                                st.error("⚠️ Error interno de conexión con la IA. Es posible que Streamlit Cloud esté reiniciando las dependencias.")
-                        else:
-                            st.error(f"Error conectando con Gemini: {e}")
+                        st.error(f"🚨 DETALLE TÉCNICO DEL ERROR: {str(e)}")
         else:
             st.warning("Ingresa tu API Key en la configuración para usar el chat.")
 
