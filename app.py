@@ -8,7 +8,6 @@ import datetime
 # --- CONFIGURACIÓN DE PÁGINA (TEMA CLARO) ---
 st.set_page_config(page_title="Dashboard Recaall", layout="wide", initial_sidebar_state="expanded")
 
-# CSS mínimo para forzar un fondo blanco/claro y texto oscuro
 st.markdown("""
     <style>
     .stApp { background-color: #FFFFFF; color: #31333F; }
@@ -24,20 +23,24 @@ st.markdown("""
 def procesar_datos(file):
     try:
         df = pd.read_csv(file, sep=';')
-        
-        # Limpieza de tiempos y creación de columnas temporales
         df['datetime'] = pd.to_datetime(df['GES_fecha_creacion'] + ' ' + df['GES_hora_min_creacion'], dayfirst=True)
         df['Hora'] = df['datetime'].dt.hour
         df['Día'] = df['datetime'].dt.date
         df['Semana'] = df['datetime'].dt.isocalendar().week
-        
-        # REGLA EXACTA: Solo contabiliza cuando dice exactamente "venta" (536 registros)
         df['es_venta'] = (df['GES_descripcion_3'].fillna('').str.strip().str.lower() == 'venta').astype(int)
-        
         return df
     except Exception as e:
         st.error(f"Error en el formato del archivo subido: {e}")
         return None
+
+# --- CONFIGURACIÓN DE IA (OCULTA PARA EL USUARIO) ---
+# Intentamos leer la API Key desde los secretos seguros de Streamlit
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=api_key)
+    ia_activa = True
+except KeyError:
+    ia_activa = False
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -45,10 +48,10 @@ with st.sidebar:
     archivo_subido = st.file_uploader("Sube tu archivo BCI (.csv)", type=["csv"])
     
     st.divider()
-    st.header("🤖 Asistente Gemini")
-    api_key = st.text_input("API Key de Gemini", type="password")
-    if api_key:
-        genai.configure(api_key=api_key)
+    if ia_activa:
+        st.success("🤖 Asistente IA Conectado")
+    else:
+        st.error("⚠️ Asistente IA Desconectado (Falta API Key)")
 
 # --- CUERPO PRINCIPAL ---
 if archivo_subido:
@@ -57,7 +60,6 @@ if archivo_subido:
     if df is not None:
         st.title("📊 Dashboard de Gestión de Ventas")
         
-        # Filtros y Botón de Excel
         c_f1, c_f2, c_f3 = st.columns(3)
         with c_f1:
             campanas = st.multiselect("Campaña", df['GES_nombre_campana_gestion'].unique(), default=df['GES_nombre_campana_gestion'].unique())
@@ -83,7 +85,6 @@ if archivo_subido:
 
         st.markdown("---")
 
-        # --- MÉTRICAS ---
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Llamados", len(df_final))
         m2.metric("Ventas Totales", df_final['es_venta'].sum()) 
@@ -93,20 +94,12 @@ if archivo_subido:
 
         st.markdown("---")
 
-        # --- GRÁFICO ORIGINAL (PRIMERA INTERFAZ) ---
         st.subheader("Desempeño Operativo")
         agrupacion_temporal = st.radio("Ver gráfico por:", ["Hora", "Día", "Semana"], horizontal=True)
         
-        # Preparamos los datos según la selección (Hora, Día o Semana)
-        resumen_temp = df_final.groupby(agrupacion_temporal).agg(
-            Llamados=('es_venta', 'count'), 
-            Ventas=('es_venta', 'sum')
-        ).reset_index()
-        
-        # Convertimos a texto para que el gráfico no distorsione el eje X
+        resumen_temp = df_final.groupby(agrupacion_temporal).agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
         resumen_temp[agrupacion_temporal] = resumen_temp[agrupacion_temporal].astype(str)
 
-        # Volvemos al gráfico de barras agrupadas con los colores azul y rojo originales
         fig_barras = px.bar(resumen_temp, x=agrupacion_temporal, y=['Llamados', 'Ventas'], 
                             barmode='group', title=f"Llamados vs Ventas por {agrupacion_temporal}",
                             labels={'value': 'Cantidad', agrupacion_temporal: agrupacion_temporal},
@@ -115,18 +108,12 @@ if archivo_subido:
         fig_barras.update_layout(paper_bgcolor="white", plot_bgcolor="white")
         st.plotly_chart(fig_barras, use_container_width=True)
 
-        # --- TABLA DE DETALLE (PRIMERA INTERFAZ) ---
         st.subheader("Detalle de Conversión por Ejecutivo")
-        ranking = df_final.groupby('GES_username_recurso').agg(
-            Llamados=('es_venta', 'count'),
-            Ventas=('es_venta', 'sum')
-        ).reset_index()
+        ranking = df_final.groupby('GES_username_recurso').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
         ranking['Eficiencia %'] = (ranking['Ventas'] / ranking['Llamados'] * 100).round(2)
         ranking = ranking.sort_values(by='Ventas', ascending=False)
-        
         st.dataframe(ranking, use_container_width=True, hide_index=True)
 
-        # --- CONCLUSIONES AUTOMÁTICAS ---
         st.markdown("---")
         st.subheader("📝 Diagnóstico Rápido")
         for camp in campanas:
@@ -137,10 +124,9 @@ if archivo_subido:
                 mejor_ejecutivo = df_camp.groupby('GES_username_recurso')['es_venta'].sum().idxmax() if t_ventas > 0 else "N/A"
                 st.info(f"**Campaña {camp}:** {t_llamados} llamados generaron {t_ventas} ventas. Ejecutivo con más cierres: {mejor_ejecutivo}.")
 
-        # --- CHAT GEMINI ---
         st.markdown("---")
         st.subheader("🤖 Consultar a Gemini")
-        if api_key:
+        if ia_activa:
             pregunta = st.chat_input("Ej: ¿Qué día tuvo la mejor conversión y por qué?")
             if pregunta:
                 with st.chat_message("user"):
@@ -156,7 +142,7 @@ if archivo_subido:
                     except Exception as e:
                         st.error(f"Error conectando con Gemini: {e}")
         else:
-            st.warning("Ingresa tu API Key en la barra lateral para usar el chat.")
+            st.warning("La IA no está configurada. Contacta al administrador del sistema para agregar la API Key.")
 
 else:
     st.title("📊 Dashboard de Gestión BCI")
