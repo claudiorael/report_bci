@@ -230,48 +230,4 @@ if archivo_subido:
             
             col_rend1, col_rend2 = st.columns(2)
             with col_rend1:
-                st.success(f"🏆 **Alto Desempeño:** **{lider['GES_username_recurso']}** lidera las ventas con un total de **{lider['Ventas']} cierres** y una eficiencia del **{lider['Eficiencia %']}%**.")
-            with col_rend2:
-                st.info(f"📊 **Calibración del Equipo:** La eficiencia promedio de conversión está en **{promedio_equipo:.2f}%**. Es recomendable revisar los motivos de fuga de los ejecutivos que se encuentren por debajo de este promedio.")
-
-        st.dataframe(ranking, use_container_width=True, hide_index=True)
-
-        # --- CHAT GEMINI (SELECCIÓN DINÁMICA DE MODELO) ---
-        st.markdown("---")
-        st.subheader("🤖 Consultar a Gemini")
-        if ia_activa:
-            pregunta = st.chat_input("Ej: ¿Qué día tuvo la mejor conversión y por qué?")
-            if pregunta:
-                with st.chat_message("user"):
-                    st.write(pregunta)
-                
-                contexto = f"Ranking Ejecutivos: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
-                
-                with st.chat_message("assistant"):
-                    try:
-                        # SOLUCIÓN ANTIBALA: Le pedimos a Google los modelos que SÍ funcionan con tu API Key
-                        modelos_disponibles = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                        
-                        if not modelos_disponibles:
-                            st.error("🚨 Tu API Key no tiene permisos para usar modelos generativos.")
-                        else:
-                            # Elegimos por defecto el primero que esté habilitado y lo usamos
-                            modelo_elegido = modelos_disponibles[0] 
-                            
-                            # Si podemos usar flash (el más rápido), lo priorizamos
-                            for m in modelos_disponibles:
-                                if '1.5-flash' in m:
-                                    modelo_elegido = m
-                                    break
-                            
-                            modelo = genai.GenerativeModel(modelo_elegido)
-                            respuesta = modelo.generate_content(contexto)
-                            st.write(respuesta.text)
-                    except Exception as e:
-                        st.error(f"🚨 DETALLE TÉCNICO DEL ERROR: {str(e)}")
-        else:
-            st.warning("⚠️ La IA no está conectada. Revisa los 'Secrets' en Streamlit Cloud.")
-
-else:
-    st.title("📊 Dashboard de Gestión BCI")
-    st.info("Por favor, sube un archivo CSV en la barra lateral para visualizar los datos.")
+                st.success(f"🏆 **Alto Desempeño:** **{lider['GES_username_recurso']}** lidera las ventas con un total de **{lider['Ventas']} cierres** y una eficiencia del **
