@@ -5,7 +5,7 @@ from io import BytesIO
 import google.generativeai as genai
 import datetime
 
-# --- CONFIGURACIÓN DE PÁGINA (TEMA CLARO) ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Dashboard Recaall", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -19,18 +19,18 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- PROCESAMIENTO DE DATOS ---
+# --- PROCESAMIENTO DE DATOS OPTIMIZADO ---
 @st.cache_data
 def procesar_datos(file):
     try:
         df = pd.read_csv(file, sep=';')
         
-        df['datetime'] = pd.to_datetime(df['GES_fecha_creacion'] + ' ' + df['GES_hora_min_creacion'], dayfirst=True)
+        # OPTIMIZACIÓN DE VELOCIDAD 1: Formato de fecha explícito
+        df['datetime'] = pd.to_datetime(df['GES_fecha_creacion'] + ' ' + df['GES_hora_min_creacion'], format='%d-%m-%Y %H:%M:%S', errors='coerce')
         df['Hora'] = df['datetime'].dt.hour
         df['Día'] = df['datetime'].dt.date
         df['Semana'] = df['datetime'].dt.isocalendar().week
         
-        # Filtro estricto para las ventas
         df['es_venta'] = (df['GES_descripcion_3'].fillna('').str.strip().str.lower() == 'venta').astype(int)
         
         return df
@@ -38,7 +38,15 @@ def procesar_datos(file):
         st.error(f"Error en el formato del archivo subido: {e}")
         return None
 
-# --- CONFIGURACIÓN DE IA (SECRETS) ---
+# --- OPTIMIZACIÓN DE VELOCIDAD 2: CACHÉ PARA EXCEL ---
+@st.cache_data
+def generar_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Reporte_Filtrado')
+    return output.getvalue()
+
+# --- CONFIGURACIÓN DE IA ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
@@ -64,7 +72,7 @@ if archivo_subido:
     if df is not None:
         st.title("📊 Dashboard de Gestión de Ventas")
         
-        # Filtros y Excel
+        # Filtros
         c_f1, c_f2, c_f3 = st.columns(3)
         with c_f1:
             campanas = st.multiselect("Campaña", df['GES_nombre_campana_gestion'].unique(), default=df['GES_nombre_campana_gestion'].unique())
@@ -75,14 +83,13 @@ if archivo_subido:
             if ejecutivos:
                 df_final = df_final[df_final['GES_username_recurso'].isin(ejecutivos)]
             
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_final.to_excel(writer, index=False, sheet_name='Reporte_Filtrado')
+            # Usar la función cacheada para no bloquear la app
+            excel_data = generar_excel(df_final)
             
             st.write("##") 
             st.download_button(
                 label="📥 Descargar a Excel",
-                data=output.getvalue(),
+                data=excel_data,
                 file_name=f"reporte_recaall_{datetime.date.today()}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
@@ -90,7 +97,6 @@ if archivo_subido:
 
         st.markdown("---")
 
-        # Métricas Cabecera
         m1, m2, m3, m4 = st.columns(4)
         total_llamados = len(df_final)
         total_ventas = df_final['es_venta'].sum()
@@ -158,7 +164,6 @@ if archivo_subido:
             fig_barras.update_layout(paper_bgcolor="white", plot_bgcolor="white", hovermode="x unified")
             st.plotly_chart(fig_barras, use_container_width=True)
 
-
         # --- SECCIÓN: ANÁLISIS DE FUGAS Y CONTACTABILIDAD ---
         st.markdown("---")
         st.subheader("🛑 Análisis de Fugas y Contactabilidad")
@@ -169,7 +174,6 @@ if archivo_subido:
         col_fuga1, col_fuga2, col_fuga3 = st.columns(3)
         
         with col_fuga1:
-            # Contactabilidad Estricta
             contactos_efectivos = df_final['GES_descripcion_1'].fillna('').str.startswith('Conecta').sum()
             tasa_cont = (contactos_efectivos / total_llamados * 100) if total_llamados > 0 else 0
             
@@ -184,53 +188,35 @@ if archivo_subido:
                 color='Estado',
                 color_discrete_map={'Contacto Efectivo': '#636EFA', 'Sin Contacto / Otros': '#CED4DA'}
             )
-            fig_pie_cont.update_layout(
-                showlegend=True, 
-                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
-                paper_bgcolor="white", plot_bgcolor="white", margin=dict(t=30, b=0, l=0, r=0)
-            )
+            fig_pie_cont.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5), paper_bgcolor="white", plot_bgcolor="white", margin=dict(t=30, b=0, l=0, r=0))
             fig_pie_cont.add_annotation(text=f"{tasa_cont:.1f}%", x=0.5, y=0.5, showarrow=False, font_size=20, font_color='#212529')
             st.plotly_chart(fig_pie_cont, use_container_width=True)
 
         with col_fuga2:
-            # Top Motivos No Venta
             if not df_no_ventas.empty:
                 motivos_nv = df_no_ventas['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index().head(10)
                 motivos_nv.columns = ['Motivo', 'Cantidad']
                 
-                fig_nv = px.bar(
-                    motivos_nv, x='Cantidad', y='Motivo', orientation='h',
-                    title="Top Motivos No Venta", text='Cantidad',
-                    color_discrete_sequence=['#EF553B']
-                )
+                fig_nv = px.bar(motivos_nv, x='Cantidad', y='Motivo', orientation='h', title="Top Motivos No Venta", text='Cantidad', color_discrete_sequence=['#EF553B'])
                 fig_nv.update_traces(textposition='outside', textfont=dict(size=11, color='#212529'))
                 fig_nv.update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=0, r=20, t=30, b=0))
                 st.plotly_chart(fig_nv, use_container_width=True)
 
         with col_fuga3:
-            # Apertura de No Conecta
             if not df_no_conecta.empty:
                 motivos_nc = df_no_conecta['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index().head(10)
                 motivos_nc.columns = ['Motivo', 'Cantidad']
                 
-                fig_nc = px.bar(
-                    motivos_nc, x='Cantidad', y='Motivo', orientation='h',
-                    title="Apertura: Por qué No Conecta", text='Cantidad',
-                    color_discrete_sequence=['#FFA15A'] 
-                )
+                fig_nc = px.bar(motivos_nc, x='Cantidad', y='Motivo', orientation='h', title="Apertura: Por qué No Conecta", text='Cantidad', color_discrete_sequence=['#FFA15A'])
                 fig_nc.update_traces(textposition='outside', textfont=dict(size=11, color='#212529'))
                 fig_nc.update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=0, r=20, t=30, b=0))
                 st.plotly_chart(fig_nc, use_container_width=True)
-
 
         # --- TABLA Y RENDIMIENTO DEL EJECUTIVO ---
         st.markdown("---")
         st.subheader("👨‍💼 Análisis de Rendimiento de Ejecutivos")
         
-        ranking = df_final.groupby('GES_username_recurso').agg(
-            Llamados=('es_venta', 'count'),
-            Ventas=('es_venta', 'sum')
-        ).reset_index()
+        ranking = df_final.groupby('GES_username_recurso').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
         ranking['Eficiencia %'] = (ranking['Ventas'] / ranking['Llamados'] * 100).round(2)
         ranking = ranking.sort_values(by='Ventas', ascending=False)
         
@@ -246,8 +232,7 @@ if archivo_subido:
 
         st.dataframe(ranking, use_container_width=True, hide_index=True)
 
-
-        # --- CHAT GEMINI CON FALLBACK ---
+        # --- CHAT GEMINI ---
         st.markdown("---")
         st.subheader("🤖 Consultar a Gemini")
         if ia_activa:
@@ -266,12 +251,11 @@ if archivo_subido:
                     except Exception as e:
                         if "404" in str(e):
                             try:
-                                # Fallback a modelo anterior si la librería en Streamlit Cloud no está actualizada
-                                modelo = genai.GenerativeModel('gemini-pro')
+                                modelo = genai.GenerativeModel('gemini-1.0-pro')
                                 respuesta = modelo.generate_content(contexto)
                                 st.write(respuesta.text)
                             except:
-                                st.error("⚠️ Error interno de conexión con la IA. Es posible que Streamlit Cloud esté reiniciando las dependencias.")
+                                st.error("⚠️ Error interno de conexión con la IA. Streamlit Cloud debe actualizar dependencias.")
                         else:
                             st.error(f"Error conectando con Gemini: {e}")
         else:
