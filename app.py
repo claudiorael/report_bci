@@ -236,18 +236,30 @@ if archivo_subido:
 
         st.dataframe(ranking, use_container_width=True, hide_index=True)
 
-        # --- CHAT GEMINI (AHORA CON "CEREBRO" COMPLETO) ---
+        # --- CHAT GEMINI (AHORA CON "CEREBRO" MULTI-VARIABLE) ---
         st.markdown("---")
         st.subheader("🤖 Consultar a Gemini")
         if ia_activa:
-            pregunta = st.chat_input("Ej: ¿Qué día tuvo la peor conversión y por qué?")
+            pregunta = st.chat_input("Ej: ¿Qué ejecutivo tiene la mayor cantidad de 'No conecta'?")
             if pregunta:
                 with st.chat_message("user"):
                     st.write(pregunta)
                 
-                # PREPARAMOS EL PANORAMA COMPLETO PARA LA IA (Días + Ejecutivos)
+                # PREPARAMOS EL PANORAMA COMPLETO PARA LA IA (Días + Ejecutivos + Fugas)
                 df_resumen_ia = df_final.groupby('Día').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
                 df_resumen_ia['Eficiencia %'] = (df_resumen_ia['Ventas'] / df_resumen_ia['Llamados'] * 100).round(2)
+                
+                # Le masticamos los "No conecta" a la IA
+                df_ia = df_final.copy()
+                df_ia['Es_No_Conecta'] = df_ia['GES_descripcion_1'].fillna('').str.contains('No conecta', case=False).astype(int)
+                
+                ranking_ia = df_ia.groupby('GES_username_recurso').agg(
+                    Llamados=('es_venta', 'count'), 
+                    Ventas=('es_venta', 'sum'),
+                    No_Conectan=('Es_No_Conecta', 'sum')
+                ).reset_index()
+                ranking_ia['Eficiencia %'] = (ranking_ia['Ventas'] / ranking_ia['Llamados'] * 100).round(2)
+                ranking_ia = ranking_ia.sort_values(by='Ventas', ascending=False)
                 
                 contexto = f"""
                 Eres el Analista Senior de Datos de Recaall SpA. Aquí tienes el panorama de la campaña seleccionada:
@@ -255,10 +267,10 @@ if archivo_subido:
                 --- RENDIMIENTO POR DÍA ---
                 {df_resumen_ia.to_string(index=False)}
                 
-                --- TOP 10 EJECUTIVOS ---
-                {ranking.head(10).to_string(index=False)}
+                --- TOP EJECUTIVOS (Ventas, Llamados y Fugas por "No Conecta") ---
+                {ranking_ia.head(15).to_string(index=False)}
                 
-                Por favor, responde a esta consulta del gerente basándote estrictamente en los datos de arriba:
+                Por favor, responde a esta consulta basándote estrictamente en los datos de arriba:
                 Pregunta: {pregunta}
                 """
                 
