@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from io import BytesIO
 import google.generativeai as genai
 import datetime
@@ -33,8 +35,7 @@ def procesar_datos(file):
         st.error(f"Error en el formato del archivo subido: {e}")
         return None
 
-# --- CONFIGURACIÓN DE IA (OCULTA PARA EL USUARIO) ---
-# Intentamos leer la API Key desde los secretos seguros de Streamlit
+# --- CONFIGURACIÓN DE IA (SECRETS) ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
@@ -51,7 +52,7 @@ with st.sidebar:
     if ia_activa:
         st.success("🤖 Asistente IA Conectado")
     else:
-        st.error("⚠️ Asistente IA Desconectado (Falta API Key)")
+        st.warning("⚠️ Asistente IA Desconectado")
 
 # --- CUERPO PRINCIPAL ---
 if archivo_subido:
@@ -94,19 +95,44 @@ if archivo_subido:
 
         st.markdown("---")
 
+        # --- NUEVO GRÁFICO DE DOBLE EJE ---
         st.subheader("Desempeño Operativo")
+        # Por defecto vendrá marcado en "Hora" como pediste
         agrupacion_temporal = st.radio("Ver gráfico por:", ["Hora", "Día", "Semana"], horizontal=True)
         
         resumen_temp = df_final.groupby(agrupacion_temporal).agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
         resumen_temp[agrupacion_temporal] = resumen_temp[agrupacion_temporal].astype(str)
 
-        fig_barras = px.bar(resumen_temp, x=agrupacion_temporal, y=['Llamados', 'Ventas'], 
-                            barmode='group', title=f"Llamados vs Ventas por {agrupacion_temporal}",
-                            labels={'value': 'Cantidad', agrupacion_temporal: agrupacion_temporal},
-                            color_discrete_sequence=['#636EFA', '#EF553B'])
+        # Crear subplots con eje secundario activado
+        fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # Barra de Llamados (Eje Izquierdo)
+        fig_dual.add_trace(
+            go.Bar(x=resumen_temp[agrupacion_temporal], y=resumen_temp['Llamados'], name="Llamados", marker_color='#636EFA'),
+            secondary_y=False,
+        )
+
+        # Línea de Ventas (Eje Derecho)
+        fig_dual.add_trace(
+            go.Scatter(x=resumen_temp[agrupacion_temporal], y=resumen_temp['Ventas'], name="Ventas", mode='lines+markers', marker_color='#EF553B', line=dict(width=3)),
+            secondary_y=True,
+        )
+
+        # Ajustes visuales para dejarlo limpio y corporativo
+        fig_dual.update_layout(
+            title_text=f"Volumen vs Cierres Reales (Vista por {agrupacion_temporal})",
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
         
-        fig_barras.update_layout(paper_bgcolor="white", plot_bgcolor="white")
-        st.plotly_chart(fig_barras, use_container_width=True)
+        # Ocultar las líneas de cuadrícula para que no se vea desordenado
+        fig_dual.update_yaxes(title_text="Volumen Llamados", secondary_y=False, showgrid=False)
+        fig_dual.update_yaxes(title_text="Total Ventas", secondary_y=True, showgrid=False)
+
+        st.plotly_chart(fig_dual, use_container_width=True)
+        # ------------------------------------
 
         st.subheader("Detalle de Conversión por Ejecutivo")
         ranking = df_final.groupby('GES_username_recurso').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
