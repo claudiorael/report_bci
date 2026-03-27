@@ -15,6 +15,7 @@ st.markdown("""
     h1, h2, h3, h4, p, span, label { color: #31333F !important; }
     [data-testid="stMetricValue"] { color: #0F52BA !important; font-weight: bold; }
     .stAlert { background-color: #F8F9FA !important; border: 1px solid #DEE2E6 !important; }
+    .metric-small { font-size: 1.2rem; font-weight: bold; color: #0F52BA; background-color: #F0F2F6; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 15px;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -88,15 +89,18 @@ if archivo_subido:
         st.markdown("---")
 
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Llamados", len(df_final))
-        m2.metric("Ventas Totales", df_final['es_venta'].sum()) 
-        t_conv = (df_final['es_venta'].sum()/len(df_final)*100 if len(df_final)>0 else 0)
+        total_llamados = len(df_final)
+        total_ventas = df_final['es_venta'].sum()
+        
+        m1.metric("Total Llamados", total_llamados)
+        m2.metric("Ventas Totales", total_ventas) 
+        t_conv = (total_ventas / total_llamados * 100) if total_llamados > 0 else 0
         m3.metric("Tasa de Conversión", f"{t_conv:.2f}%")
         m4.metric("Días Operativos", df_final['Día'].nunique())
 
         st.markdown("---")
 
-        # --- GRÁFICO DE DESEMPEÑO (BARRAS GRISES CON TEXTO) ---
+        # --- GRÁFICO DE DESEMPEÑO ---
         st.subheader("Desempeño Operativo (Volumen y Éxito)")
         
         vista = st.radio("Selecciona el nivel de detalle:", ["Resumen General por Día", "Detalle por Hora (Filtrar por Día)"], horizontal=True)
@@ -105,6 +109,8 @@ if archivo_subido:
         resumen_temp = None
 
         if vista == "Resumen General por Día":
+            st.markdown(f"<div class='metric-small'>Total de ventas en el periodo: {total_ventas}</div>", unsafe_allow_html=True)
+            
             resumen_temp = df_final.groupby('Día').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
             resumen_temp['Día'] = resumen_temp['Día'].astype(str)
             resumen_temp['% Conv'] = (resumen_temp['Ventas'] / resumen_temp['Llamados'] * 100).fillna(0).round(1)
@@ -124,6 +130,9 @@ if archivo_subido:
             if len(dias_disponibles) > 0:
                 dia_seleccionado = st.selectbox("📅 Selecciona un día específico:", dias_disponibles)
                 df_dia = df_final[df_final['Día'] == dia_seleccionado]
+                
+                ventas_del_dia = df_dia['es_venta'].sum()
+                st.markdown(f"<div class='metric-small'>Ventas totales logradas el {dia_seleccionado}: {ventas_del_dia}</div>", unsafe_allow_html=True)
                 
                 resumen_temp = df_dia.groupby('Hora').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
                 resumen_temp['Hora'] = resumen_temp['Hora'].astype(str) + ":00" 
@@ -147,71 +156,76 @@ if archivo_subido:
             st.plotly_chart(fig_barras, use_container_width=True)
 
 
-        # --- NUEVA SECCIÓN: ANÁLISIS DE FUGAS (NO VENTAS) ---
+        # --- SECCIÓN: ANÁLISIS DE FUGAS Y CONTACTABILIDAD ---
         st.markdown("---")
-        st.subheader("🛑 Análisis de Fugas (Motivos de No Venta)")
+        st.subheader("🛑 Análisis de Fugas y Contactabilidad")
         
+        # Filtros de descripción para No Venta y No Conecta
         df_no_ventas = df_final[df_final['es_venta'] == 0]
+        df_no_conecta = df_final[df_final['GES_descripcion_1'].fillna('').str.contains('No conecta', case=False)]
         
-        if not df_no_ventas.empty:
-            col_fuga1, col_fuga2 = st.columns([2, 1])
+        col_fuga1, col_fuga2, col_fuga3 = st.columns(3)
+        
+        with col_fuga1:
+            # Cálculo estricto de contactabilidad: (Contactos Efectivos / Total Llamados)
+            contactos_efectivos = df_final['GES_descripcion_1'].fillna('').str.contains('Conecta', case=False).sum()
+            tasa_cont = (contactos_efectivos / total_llamados * 100) if total_llamados > 0 else 0
             
-            with col_fuga1:
-                # Top 10 motivos de rechazo
-                motivos = df_no_ventas['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index()
-                motivos.columns = ['Motivo', 'Cantidad']
-                motivos_top = motivos.head(10)
+            # DataFrame para el gráfico de torta
+            data_pie = pd.DataFrame({
+                'Estado': ['Contacto Efectivo', 'Sin Contacto'],
+                'Cantidad': [contactos_efectivos, total_llamados - contactos_efectivos]
+            })
+            
+            fig_pie_cont = px.pie(
+                data_pie, values='Cantidad', names='Estado',
+                hole=0.6, title="Nivel de Contactabilidad",
+                color='Estado',
+                color_discrete_map={'Contacto Efectivo': '#636EFA', 'Sin Contacto': '#CED4DA'}
+            )
+            fig_pie_cont.update_layout(
+                showlegend=True, 
+                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                paper_bgcolor="white", plot_bgcolor="white", margin=dict(t=30, b=0, l=0, r=0)
+            )
+            fig_pie_cont.add_annotation(text=f"{tasa_cont:.1f}%", x=0.5, y=0.5, showarrow=False, font_size=20, font_color='#212529')
+            st.plotly_chart(fig_pie_cont, use_container_width=True)
+
+        with col_fuga2:
+            # Motivos generales de No Venta (Top 10)
+            if not df_no_ventas.empty:
+                motivos_nv = df_no_ventas['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index().head(10)
+                motivos_nv.columns = ['Motivo', 'Cantidad']
                 
-                fig_fugas = px.bar(
-                    motivos_top, x='Cantidad', y='Motivo', orientation='h',
-                    title="Top 10 Razones de Falla",
-                    text='Cantidad',
-                    color_discrete_sequence=['#EF553B'] # Rojo para destacar que es un bloqueo
+                fig_nv = px.bar(
+                    motivos_nv, x='Cantidad', y='Motivo', orientation='h',
+                    title="Top Motivos No Venta", text='Cantidad',
+                    color_discrete_sequence=['#EF553B']
                 )
-                fig_fugas.update_traces(textposition='outside', textfont=dict(size=12, color='#212529'))
-                fig_fugas.update_layout(
-                    yaxis={'categoryorder':'total ascending'}, # Ordena para que el mayor quede arriba
-                    paper_bgcolor="white", plot_bgcolor="white",
-                    margin=dict(l=0, r=20, t=40, b=0)
+                fig_nv.update_traces(textposition='outside', textfont=dict(size=11, color='#212529'))
+                fig_nv.update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=0, r=20, t=30, b=0))
+                st.plotly_chart(fig_nv, use_container_width=True)
+
+        with col_fuga3:
+            # Apertura de motivos de "No Conecta"
+            if not df_no_conecta.empty:
+                motivos_nc = df_no_conecta['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index().head(10)
+                motivos_nc.columns = ['Motivo', 'Cantidad']
+                
+                fig_nc = px.bar(
+                    motivos_nc, x='Cantidad', y='Motivo', orientation='h',
+                    title="Apertura: Por qué No Conecta", text='Cantidad',
+                    color_discrete_sequence=['#FFA15A'] # Naranja claro para diferenciar
                 )
-                st.plotly_chart(fig_fugas, use_container_width=True)
-                
-            with col_fuga2:
-                # Tasa de Contactabilidad (Conecta vs No Conecta)
-                st.markdown("#### Nivel de Contactabilidad")
-                st.caption("Proporción de llamadas que lograron conexión real con un cliente.")
-                
-                # Buscamos la palabra "Conecta" en la descripción 1
-                df_final['Contactó'] = df_final['GES_descripcion_1'].fillna('').str.contains('Conecta', case=False)
-                contactabilidad = df_final['Contactó'].value_counts().reset_index()
-                contactabilidad.columns = ['Conectó', 'Cantidad']
-                contactabilidad['Estado'] = contactabilidad['Conectó'].apply(lambda x: 'Contacto Efectivo' if x else 'Sin Contacto')
-                
-                fig_pie_cont = px.pie(
-                    contactabilidad, values='Cantidad', names='Estado',
-                    hole=0.6,
-                    color='Estado',
-                    color_discrete_map={'Contacto Efectivo': '#636EFA', 'Sin Contacto': '#CED4DA'}
-                )
-                fig_pie_cont.update_layout(
-                    showlegend=True, 
-                    legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
-                    paper_bgcolor="white", plot_bgcolor="white", 
-                    margin=dict(t=10, b=0, l=0, r=0)
-                )
-                
-                # Agregamos el % de contactabilidad en el centro del anillo
-                tasa_cont = (df_final['Contactó'].sum() / len(df_final) * 100) if len(df_final) > 0 else 0
-                fig_pie_cont.add_annotation(text=f"{tasa_cont:.1f}%", x=0.5, y=0.5, showarrow=False, font_size=24, font_color='#212529')
-                
-                st.plotly_chart(fig_pie_cont, use_container_width=True)
-        else:
-            st.success("No hay registros de llamadas sin venta en la selección actual.")
+                fig_nc.update_traces(textposition='outside', textfont=dict(size=11, color='#212529'))
+                fig_nc.update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=0, r=20, t=30, b=0))
+                st.plotly_chart(fig_nc, use_container_width=True)
 
 
-        # --- TABLA DE DETALLE ---
+        # --- TABLA Y RENDIMIENTO DEL EJECUTIVO ---
         st.markdown("---")
-        st.subheader("Detalle de Conversión por Ejecutivo")
+        st.subheader("👨‍💼 Análisis de Rendimiento de Ejecutivos")
+        
         ranking = df_final.groupby('GES_username_recurso').agg(
             Llamados=('es_venta', 'count'),
             Ventas=('es_venta', 'sum')
@@ -219,20 +233,21 @@ if archivo_subido:
         ranking['Eficiencia %'] = (ranking['Ventas'] / ranking['Llamados'] * 100).round(2)
         ranking = ranking.sort_values(by='Ventas', ascending=False)
         
+        # Conclusión dinámica de RRHH / Desempeño
+        if not ranking.empty:
+            promedio_equipo = ranking['Eficiencia %'].mean()
+            lider = ranking.iloc[0]
+            
+            col_rend1, col_rend2 = st.columns(2)
+            with col_rend1:
+                st.success(f"🏆 **Alto Desempeño:** **{lider['GES_username_recurso']}** lidera las ventas con un total de **{lider['Ventas']} cierres** y una eficiencia del **{lider['Eficiencia %']}%**.")
+            with col_rend2:
+                st.info(f"📊 **Calibración del Equipo:** La eficiencia promedio de conversión está en **{promedio_equipo:.2f}%**. Es recomendable revisar los motivos de fuga de los ejecutivos que se encuentren por debajo de este promedio.")
+
         st.dataframe(ranking, use_container_width=True, hide_index=True)
 
-        # --- CONCLUSIONES AUTOMÁTICAS ---
-        st.markdown("---")
-        st.subheader("📝 Diagnóstico Rápido")
-        for camp in campanas:
-            df_camp = df_final[df_final['GES_nombre_campana_gestion'] == camp]
-            if not df_camp.empty:
-                t_llamados = len(df_camp)
-                t_ventas = df_camp['es_venta'].sum()
-                mejor_ejecutivo = df_camp.groupby('GES_username_recurso')['es_venta'].sum().idxmax() if t_ventas > 0 else "N/A"
-                st.info(f"**Campaña {camp}:** {t_llamados} llamados generaron {t_ventas} ventas. Ejecutivo con más cierres: {mejor_ejecutivo}.")
 
-        # --- CHAT GEMINI ---
+        # --- CHAT GEMINI CON FALLBACK DE MODELOS ---
         st.markdown("---")
         st.subheader("🤖 Consultar a Gemini")
         if ia_activa:
@@ -241,18 +256,25 @@ if archivo_subido:
                 with st.chat_message("user"):
                     st.write(pregunta)
                 
-                if resumen_temp is not None:
-                    contexto = f"Datos del gráfico en pantalla: \n{resumen_temp.to_string()}\nRanking Ejecutivos: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
-                else:
-                    contexto = f"Ranking Ejecutivos: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
+                contexto = f"Ranking Ejecutivos: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
                 
                 with st.chat_message("assistant"):
+                    # Sistema de reintento para evitar el error 404 si la librería está desactualizada
                     try:
-                        modelo = genai.GenerativeModel('gemini-pro')
+                        modelo = genai.GenerativeModel('gemini-1.5-flash')
                         respuesta = modelo.generate_content(contexto)
                         st.write(respuesta.text)
                     except Exception as e:
-                        st.error(f"Error conectando con Gemini: {e}")
+                        if "404" in str(e):
+                            try:
+                                # Fallback a modelo anterior
+                                modelo = genai.GenerativeModel('gemini-1.0-pro')
+                                respuesta = modelo.generate_content(contexto)
+                                st.write(respuesta.text)
+                            except:
+                                st.error("⚠️ La versión de tu librería de Gemini es muy antigua para conectar. Por favor, abre tu terminal y ejecuta: pip install --upgrade google-generativeai")
+                        else:
+                            st.error(f"Error conectando con Gemini: {e}")
         else:
             st.warning("Ingresa tu API Key en la configuración para usar el chat.")
 
