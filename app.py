@@ -5,51 +5,50 @@ from io import BytesIO
 import google.generativeai as genai
 import datetime
 
-# --- CONFIGURACIÓN DE PÁGINA (TEMA CLARO) ---
-st.set_page_config(page_title="Dashboard Recaall", layout="wide", initial_sidebar_state="expanded")
+# --- 1. CONFIGURACIÓN DE ESTILO RECAALL ---
+st.set_page_config(page_title="Recaall Analytics - BCI", layout="wide", initial_sidebar_state="expanded")
 
+# Estética limpia y profesional (Azul Recaall)
 st.markdown("""
     <style>
     .stApp { background-color: #FFFFFF; color: #31333F; }
     [data-testid="stSidebar"] { background-color: #F0F2F6; border-right: 1px solid #E6E6E9; }
-    h1, h2, h3, h4, p, span, label { color: #31333F !important; }
-    [data-testid="stMetricValue"] { color: #0F52BA !important; font-weight: bold; }
-    .stAlert { background-color: #F8F9FA !important; border: 1px solid #DEE2E6 !important; }
-    .metric-small { font-size: 1.2rem; font-weight: bold; color: #0F52BA; background-color: #F0F2F6; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 15px;}
+    h1, h2, h3 { color: #0F52BA !important; }
+    .stMetric { background-color: #F8F9FA; padding: 15px; border-radius: 10px; border: 1px solid #E6E6E9; }
+    [data-testid="stMetricValue"] { color: #0F52BA !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- PROCESAMIENTO DE DATOS OPTIMIZADO ---
+# --- 2. MOTOR DE PROCESAMIENTO ---
 @st.cache_data
 def procesar_datos(file):
     try:
+        # Lectura con separador punto y coma
         df = pd.read_csv(file, sep=';')
         
-        # Lectura flexible y limpieza de fechas corruptas
+        # Limpieza de fechas y creación de columnas temporales
         df['datetime'] = pd.to_datetime(df['GES_fecha_creacion'] + ' ' + df['GES_hora_min_creacion'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['datetime'])
         
         df['Hora'] = df['datetime'].dt.hour
-        df['Día'] = df['datetime'].dt.date.astype(str) 
-        df['Semana'] = df['datetime'].dt.isocalendar().week
+        df['Día'] = df['datetime'].dt.date.astype(str)
         
-        # Filtro estricto para las ventas
+        # Lógica de negocio: ¿Qué es una venta?
         df['es_venta'] = (df['GES_descripcion_3'].fillna('').str.strip().str.lower() == 'venta').astype(int)
         
         return df
     except Exception as e:
-        st.error(f"Error en el formato del archivo subido: {e}")
+        st.error(f"Error procesando el CSV: {e}")
         return None
 
-# --- CACHÉ PARA EXCEL ---
 @st.cache_data
 def generar_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Reporte_Filtrado')
+        df.to_excel(writer, index=False, sheet_name='Data_Recaall')
     return output.getvalue()
 
-# --- CONFIGURACIÓN DE IA (SECRETS EN LA NUBE) ---
+# --- 3. CONEXIÓN CON GEMINI ---
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
@@ -57,247 +56,116 @@ try:
 except Exception:
     ia_activa = False
 
-# --- SIDEBAR ---
+# --- 4. INTERFAZ LATERAL ---
 with st.sidebar:
-    st.header("📂 Carga de Datos")
-    archivo_subido = st.file_uploader("Sube tu archivo BCI (.csv)", type=["csv"])
-    
+    st.header("📂 Carga de Gestión")
+    archivo_subido = st.file_uploader("Subir archivo CSV (Formato BCI)", type=["csv"])
     st.divider()
     if ia_activa:
-        st.success("🤖 Asistente IA Conectado")
+        st.success("🤖 Analista IA Conectado")
     else:
-        st.error("⚠️ Asistente IA Desconectado (Revisa los Secrets en Streamlit Cloud)")
+        st.warning("⚠️ IA Desconectada (Revisa los Secrets)")
 
-# --- CUERPO PRINCIPAL ---
+# --- 5. CUERPO DEL DASHBOARD ---
 if archivo_subido:
     df = procesar_datos(archivo_subido)
     
     if df is not None:
-        st.title("📊 Dashboard de Gestión de Ventas")
+        st.title("📊 Control de Gestión Recaall - BCI")
         
-        # Filtros y Excel
-        c_f1, c_f2, c_f3 = st.columns(3)
-        with c_f1:
+        # Filtros de usuario
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
             campanas = st.multiselect("Campaña", df['GES_nombre_campana_gestion'].unique(), default=df['GES_nombre_campana_gestion'].unique())
-        with c_f2:
-            ejecutivos = st.multiselect("Ejecutivo", df['GES_username_recurso'].unique())
-        with c_f3:
-            df_final = df[df['GES_nombre_campana_gestion'].isin(campanas)]
-            if ejecutivos:
-                df_final = df_final[df_final['GES_username_recurso'].isin(ejecutivos)]
-            
-            excel_data = generar_excel(df_final)
-            st.write("##") 
-            st.download_button(
-                label="📥 Descargar a Excel",
-                data=excel_data,
-                file_name=f"reporte_recaall_{datetime.date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
+        with col_f2:
+            ejecutivos = st.multiselect("Ejecutivos Específicos", df['GES_username_recurso'].unique())
 
-        st.markdown("---")
+        # Aplicación de filtros
+        df_final = df[df['GES_nombre_campana_gestion'].isin(campanas)]
+        if ejecutivos:
+            df_final = df_final[df_final['GES_username_recurso'].isin(ejecutivos)]
 
-        # Métricas Cabecera
+        # KPIs Principales
         m1, m2, m3, m4 = st.columns(4)
-        total_llamados = len(df_final)
+        total_gestiones = len(df_final)
         total_ventas = df_final['es_venta'].sum()
+        tasa_conv = (total_ventas / total_gestiones * 100) if total_gestiones > 0 else 0
         
-        m1.metric("Total Llamados", total_llamados)
-        m2.metric("Ventas Totales", total_ventas) 
-        t_conv = (total_ventas / total_llamados * 100) if total_llamados > 0 else 0
-        m3.metric("Tasa de Conversión", f"{t_conv:.2f}%")
-        m4.metric("Días Operativos", df_final['Día'].nunique())
+        m1.metric("Gestiones Totales", total_gestiones)
+        m2.metric("Ventas Logradas", total_ventas)
+        m3.metric("% Conversión", f"{tasa_conv:.2f}%")
+        m4.metric("Días de Operación", df_final['Día'].nunique())
 
-        st.markdown("---")
+        st.divider()
 
-        # --- GRÁFICO DE DESEMPEÑO ---
-        st.subheader("Desempeño Operativo (Volumen y Éxito)")
+        # Visualizaciones
+        col_chart1, col_chart2 = st.columns([2, 1])
         
-        vista = st.radio("Selecciona el nivel de detalle:", ["Resumen General por Día", "Detalle por Hora (Filtrar por Día)"], horizontal=True)
-        
-        fig_barras = None
-        resumen_temp = None
+        with col_chart1:
+            st.subheader("Rendimiento por Bloque Horario")
+            stats_hora = df_final.groupby('Hora').agg(Ventas=('es_venta', 'sum')).reset_index()
+            fig_h = px.bar(stats_hora, x='Hora', y='Ventas', color_discrete_sequence=['#0F52BA'])
+            st.plotly_chart(fig_h, use_container_width=True)
 
-        if vista == "Resumen General por Día":
-            st.markdown(f"<div class='metric-small'>Total de ventas en la selección: {total_ventas}</div>", unsafe_allow_html=True)
-            
-            resumen_temp = df_final.groupby('Día').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
-            resumen_temp['Día'] = resumen_temp['Día'].astype(str)
-            resumen_temp['% Conv'] = (resumen_temp['Ventas'] / resumen_temp['Llamados'] * 100).fillna(0).round(1)
-            resumen_temp['Etiqueta'] = resumen_temp['% Conv'].astype(str) + '%'
-            
-            fig_barras = px.bar(
-                resumen_temp, x='Día', y='Llamados', text='Etiqueta',
-                title="Volumen de Gestiones y Porcentaje de Conversión por Día",
-                labels={'Llamados': 'Total Llamados', 'Día': 'Fecha'},
-                color_discrete_sequence=['#CED4DA'], 
-                hover_data={'Ventas': True, '% Conv': True, 'Etiqueta': False}
-            )
-            
-        else: 
-            dias_disponibles = sorted(df_final['Día'].unique())
-            
-            if len(dias_disponibles) > 0:
-                dia_seleccionado = st.selectbox("📅 Selecciona un día específico:", dias_disponibles)
-                df_dia = df_final[df_final['Día'] == dia_seleccionado]
-                
-                ventas_del_dia = df_dia['es_venta'].sum()
-                st.markdown(f"<div class='metric-small'>Ventas totales logradas el {dia_seleccionado}: {ventas_del_dia}</div>", unsafe_allow_html=True)
-                
-                resumen_temp = df_dia.groupby('Hora').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
-                resumen_temp['Hora'] = resumen_temp['Hora'].astype(str) + ":00" 
-                
-                resumen_temp['% Conv'] = (resumen_temp['Ventas'] / resumen_temp['Llamados'] * 100).fillna(0).round(1)
-                resumen_temp['Etiqueta'] = resumen_temp['% Conv'].astype(str) + '%'
-                
-                fig_barras = px.bar(
-                    resumen_temp, x='Hora', y='Llamados', text='Etiqueta',
-                    title=f"Volumen y Conversión por Hora (Día: {dia_seleccionado})",
-                    labels={'Llamados': 'Total Llamados', 'Hora': 'Franja Horaria'},
-                    color_discrete_sequence=['#CED4DA'], 
-                    hover_data={'Ventas': True, '% Conv': True, 'Etiqueta': False}
-                )
-            else:
-                st.warning("No hay datos disponibles para la selección actual.")
+        with col_chart2:
+            st.subheader("Estado de Contactabilidad")
+            cont_stats = df_final['GES_descripcion_1'].value_counts().head(5)
+            fig_p = px.pie(values=cont_stats.values, names=cont_stats.index, hole=0.4)
+            st.plotly_chart(fig_p, use_container_width=True)
 
-        if fig_barras is not None:
-            fig_barras.update_traces(textposition='auto', textfont=dict(size=14, color='#212529', family="Arial Black"))
-            fig_barras.update_layout(paper_bgcolor="white", plot_bgcolor="white", hovermode="x unified")
-            st.plotly_chart(fig_barras, use_container_width=True)
-
-        # --- SECCIÓN: ANÁLISIS DE FUGAS Y CONTACTABILIDAD ---
-        st.markdown("---")
-        st.subheader("🛑 Análisis de Fugas y Contactabilidad")
-        
-        df_no_ventas = df_final[df_final['es_venta'] == 0]
-        
-        col_fuga1, col_fuga2 = st.columns(2)
-        
-        with col_fuga1:
-            # Contactabilidad Estricta
-            contactos_efectivos = df_final['GES_descripcion_1'].fillna('').str.startswith('Conecta').sum()
-            tasa_cont = (contactos_efectivos / total_llamados * 100) if total_llamados > 0 else 0
-            
-            data_pie = pd.DataFrame({
-                'Estado': ['Contacto Efectivo', 'Sin Contacto / Otros'],
-                'Cantidad': [contactos_efectivos, total_llamados - contactos_efectivos]
-            })
-            
-            fig_pie_cont = px.pie(
-                data_pie, values='Cantidad', names='Estado',
-                hole=0.6, title="Nivel de Contactabilidad",
-                color='Estado',
-                color_discrete_map={'Contacto Efectivo': '#636EFA', 'Sin Contacto / Otros': '#CED4DA'}
-            )
-            fig_pie_cont.update_layout(
-                showlegend=True, 
-                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
-                paper_bgcolor="white", plot_bgcolor="white", margin=dict(t=30, b=0, l=0, r=0)
-            )
-            fig_pie_cont.add_annotation(text=f"{tasa_cont:.1f}%", x=0.5, y=0.5, showarrow=False, font_size=20, font_color='#212529')
-            st.plotly_chart(fig_pie_cont, use_container_width=True)
-
-        with col_fuga2:
-            # Top Motivos No Venta
-            if not df_no_ventas.empty:
-                motivos_nv = df_no_ventas['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index().head(10)
-                motivos_nv.columns = ['Motivo', 'Cantidad']
-                
-                fig_nv = px.bar(
-                    motivos_nv, x='Cantidad', y='Motivo', orientation='h',
-                    title="Top Motivos No Venta", text='Cantidad',
-                    color_discrete_sequence=['#EF553B']
-                )
-                fig_nv.update_traces(textposition='outside', textfont=dict(size=11, color='#212529'))
-                fig_nv.update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=0, r=20, t=30, b=0))
-                st.plotly_chart(fig_nv, use_container_width=True)
-
-        # --- TABLA Y RENDIMIENTO DEL EJECUTIVO ---
-        st.markdown("---")
-        st.subheader("👨‍💼 Análisis de Rendimiento de Ejecutivos")
-        
+        # Tabla de Ejecutivos y Exportación
+        st.subheader("👨‍💼 Desempeño por Ejecutivo")
         ranking = df_final.groupby('GES_username_recurso').agg(
             Llamados=('es_venta', 'count'),
             Ventas=('es_venta', 'sum')
-        ).reset_index()
-        ranking['Eficiencia %'] = (ranking['Ventas'] / ranking['Llamados'] * 100).round(2)
-        ranking = ranking.sort_values(by='Ventas', ascending=False)
-        
-        if not ranking.empty:
-            promedio_equipo = ranking['Eficiencia %'].mean()
-            lider = ranking.iloc[0]
-            
-            col_rend1, col_rend2 = st.columns(2)
-            with col_rend1:
-                st.success(f"🏆 **Alto Desempeño:** **{lider['GES_username_recurso']}** lidera las ventas con un total de **{lider['Ventas']} cierres** y una eficiencia del **{lider['Eficiencia %']}%**.")
-            with col_rend2:
-                st.info(f"📊 **Calibración del Equipo:** La eficiencia promedio de conversión está en **{promedio_equipo:.2f}%**. Es recomendable revisar los motivos de fuga de los ejecutivos que se encuentren por debajo de este promedio.")
-
+        ).reset_index().sort_values(by='Ventas', ascending=False)
         st.dataframe(ranking, use_container_width=True, hide_index=True)
+        
+        st.download_button("📥 Descargar Reporte en Excel", generar_excel(df_final), 
+                           "reporte_recaall_bci.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-        # --- CHAT GEMINI (AHORA CON "CEREBRO" MULTI-VARIABLE) ---
-        st.markdown("---")
-        st.subheader("🤖 Consultar a Gemini")
+        # --- 6. EL CEREBRO DE GEMINI (ANALISTA SENIOR) ---
+        st.divider()
+        st.subheader("🤖 Consultar a Gemini (Analista Senior)")
+        
         if ia_activa:
-            pregunta = st.chat_input("Ej: ¿Qué ejecutivo tiene la mayor cantidad de 'No conecta'?")
-            if pregunta:
-                with st.chat_message("user"):
-                    st.write(pregunta)
+            user_input = st.chat_input("Pregunta sobre horarios, tipificaciones o rendimiento...")
+            if user_input:
+                with st.chat_message("user"): st.write(user_input)
                 
-                # PREPARAMOS EL PANORAMA COMPLETO PARA LA IA (Días + Ejecutivos + Fugas)
-                df_resumen_ia = df_final.groupby('Día').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
-                df_resumen_ia['Eficiencia %'] = (df_resumen_ia['Ventas'] / df_resumen_ia['Llamados'] * 100).round(2)
+                # Preparamos la data "masticada" para que la IA sea 100% precisa
+                h_data = df_final.groupby('Hora').agg(Llamados=('es_venta','count'), Ventas=('es_venta','sum')).reset_index()
+                h_data['%_Conv'] = (h_data['Ventas']/h_data['Llamados']*100).round(1)
                 
-                # Le masticamos los "No conecta" a la IA
-                df_ia = df_final.copy()
-                df_ia['Es_No_Conecta'] = df_ia['GES_descripcion_1'].fillna('').str.contains('No conecta', case=False).astype(int)
+                tipificaciones = df_final['GES_descripcion_2'].value_counts().head(15).to_string()
+                estados = df_final['GES_descripcion_1'].value_counts().head(10).to_string()
+
+                contexto_ia = f"""
+                Eres Claudio, Analista Senior de Recaall SpA. Analiza esta data de la campaña BCI:
                 
-                ranking_ia = df_ia.groupby('GES_username_recurso').agg(
-                    Llamados=('es_venta', 'count'), 
-                    Ventas=('es_venta', 'sum'),
-                    No_Conectan=('Es_No_Conecta', 'sum')
-                ).reset_index()
-                ranking_ia['Eficiencia %'] = (ranking_ia['Ventas'] / ranking_ia['Llamados'] * 100).round(2)
-                ranking_ia = ranking_ia.sort_values(by='Ventas', ascending=False)
+                --- RENDIMIENTO POR HORA:
+                {h_data.to_string(index=False)}
                 
-                contexto = f"""
-                Eres el Analista Senior de Datos de Recaall SpA. Aquí tienes el panorama de la campaña seleccionada:
+                --- TIPIFICACIONES (Motivos No Venta):
+                {tipificaciones}
                 
-                --- RENDIMIENTO POR DÍA ---
-                {df_resumen_ia.to_string(index=False)}
+                --- ESTADOS DE LLAMADA (Contactabilidad):
+                {estados}
                 
-                --- TOP EJECUTIVOS (Ventas, Llamados y Fugas por "No Conecta") ---
-                {ranking_ia.head(15).to_string(index=False)}
-                
-                Por favor, responde a esta consulta basándote estrictamente en los datos de arriba:
-                Pregunta: {pregunta}
+                Pregunta del Gerente: {user_input}
+                Responde como experto, detectando patrones horarios y motivos de fuga.
                 """
-                
+
                 with st.chat_message("assistant"):
                     try:
-                        # Buscamos los modelos disponibles
-                        modelos_disponibles = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                        # Selección automática de modelo
+                        modelos = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                        model_name = next((m for m in modelos if '1.5-flash' in m), modelos[0])
                         
-                        if not modelos_disponibles:
-                            st.error("🚨 Tu API Key no tiene permisos para usar modelos generativos.")
-                        else:
-                            # Elegimos por defecto el primero que esté habilitado
-                            modelo_elegido = modelos_disponibles[0] 
-                            
-                            for m in modelos_disponibles:
-                                if '1.5-flash' in m:
-                                    modelo_elegido = m
-                                    break
-                            
-                            modelo = genai.GenerativeModel(modelo_elegido)
-                            respuesta = modelo.generate_content(contexto)
-                            st.write(respuesta.text)
+                        gemini = genai.GenerativeModel(model_name)
+                        res = gemini.generate_content(contexto_ia)
+                        st.markdown(res.text)
                     except Exception as e:
-                        st.error(f"🚨 DETALLE TÉCNICO DEL ERROR: {str(e)}")
-        else:
-            st.warning("⚠️ La IA no está conectada. Revisa los 'Secrets' en Streamlit Cloud.")
-
+                        st.error(f"Error IA: {e}")
 else:
-    st.title("📊 Dashboard de Gestión BCI")
-    st.info("Por favor, sube un archivo CSV en la barra lateral para visualizar los datos.")
+    st.info("👋 Bienvenido, Claudio. Por favor sube el archivo CSV de gestión para comenzar el análisis.")
