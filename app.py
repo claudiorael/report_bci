@@ -167,13 +167,13 @@ if archivo_subido:
         col_fuga1, col_fuga2, col_fuga3 = st.columns(3)
         
         with col_fuga1:
-            # Cálculo estricto de contactabilidad: (Contactos Efectivos / Total Llamados)
-            contactos_efectivos = df_final['GES_descripcion_1'].fillna('').str.contains('Conecta', case=False).sum()
+            # SOLUCIÓN DE CONTACTABILIDAD: Solo suma si la frase COMIENZA con "Conecta"
+            contactos_efectivos = df_final['GES_descripcion_1'].fillna('').str.startswith('Conecta').sum()
             tasa_cont = (contactos_efectivos / total_llamados * 100) if total_llamados > 0 else 0
             
             # DataFrame para el gráfico de torta
             data_pie = pd.DataFrame({
-                'Estado': ['Contacto Efectivo', 'Sin Contacto'],
+                'Estado': ['Contacto Efectivo', 'Sin Contacto / Otros'],
                 'Cantidad': [contactos_efectivos, total_llamados - contactos_efectivos]
             })
             
@@ -181,7 +181,7 @@ if archivo_subido:
                 data_pie, values='Cantidad', names='Estado',
                 hole=0.6, title="Nivel de Contactabilidad",
                 color='Estado',
-                color_discrete_map={'Contacto Efectivo': '#636EFA', 'Sin Contacto': '#CED4DA'}
+                color_discrete_map={'Contacto Efectivo': '#636EFA', 'Sin Contacto / Otros': '#CED4DA'}
             )
             fig_pie_cont.update_layout(
                 showlegend=True, 
@@ -215,7 +215,7 @@ if archivo_subido:
                 fig_nc = px.bar(
                     motivos_nc, x='Cantidad', y='Motivo', orientation='h',
                     title="Apertura: Por qué No Conecta", text='Cantidad',
-                    color_discrete_sequence=['#FFA15A'] # Naranja claro para diferenciar
+                    color_discrete_sequence=['#FFA15A'] 
                 )
                 fig_nc.update_traces(textposition='outside', textfont=dict(size=11, color='#212529'))
                 fig_nc.update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor="white", plot_bgcolor="white", margin=dict(l=0, r=20, t=30, b=0))
@@ -233,7 +233,6 @@ if archivo_subido:
         ranking['Eficiencia %'] = (ranking['Ventas'] / ranking['Llamados'] * 100).round(2)
         ranking = ranking.sort_values(by='Ventas', ascending=False)
         
-        # Conclusión dinámica de RRHH / Desempeño
         if not ranking.empty:
             promedio_equipo = ranking['Eficiencia %'].mean()
             lider = ranking.iloc[0]
@@ -259,7 +258,6 @@ if archivo_subido:
                 contexto = f"Ranking Ejecutivos: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
                 
                 with st.chat_message("assistant"):
-                    # Sistema de reintento para evitar el error 404 si la librería está desactualizada
                     try:
                         modelo = genai.GenerativeModel('gemini-1.5-flash')
                         respuesta = modelo.generate_content(contexto)
@@ -267,7 +265,6 @@ if archivo_subido:
                     except Exception as e:
                         if "404" in str(e):
                             try:
-                                # Fallback a modelo anterior
                                 modelo = genai.GenerativeModel('gemini-1.0-pro')
                                 respuesta = modelo.generate_content(contexto)
                                 st.write(respuesta.text)
