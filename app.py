@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from io import BytesIO
 import google.generativeai as genai
 import datetime
@@ -10,6 +8,7 @@ import datetime
 # --- CONFIGURACIÓN DE PÁGINA (TEMA CLARO) ---
 st.set_page_config(page_title="Dashboard Recaall", layout="wide", initial_sidebar_state="expanded")
 
+# CSS mínimo para forzar un fondo blanco/claro y texto oscuro
 st.markdown("""
     <style>
     .stApp { background-color: #FFFFFF; color: #31333F; }
@@ -25,11 +24,16 @@ st.markdown("""
 def procesar_datos(file):
     try:
         df = pd.read_csv(file, sep=';')
+        
+        # Limpieza de tiempos y creación de columnas temporales
         df['datetime'] = pd.to_datetime(df['GES_fecha_creacion'] + ' ' + df['GES_hora_min_creacion'], dayfirst=True)
         df['Hora'] = df['datetime'].dt.hour
         df['Día'] = df['datetime'].dt.date
         df['Semana'] = df['datetime'].dt.isocalendar().week
+        
+        # REGLA EXACTA: Solo contabiliza cuando dice exactamente "venta" (536 registros)
         df['es_venta'] = (df['GES_descripcion_3'].fillna('').str.strip().str.lower() == 'venta').astype(int)
+        
         return df
     except Exception as e:
         st.error(f"Error en el formato del archivo subido: {e}")
@@ -52,7 +56,7 @@ with st.sidebar:
     if ia_activa:
         st.success("🤖 Asistente IA Conectado")
     else:
-        st.warning("⚠️ Asistente IA Desconectado")
+        st.error("⚠️ Asistente IA Desconectado (Falta API Key)")
 
 # --- CUERPO PRINCIPAL ---
 if archivo_subido:
@@ -61,6 +65,7 @@ if archivo_subido:
     if df is not None:
         st.title("📊 Dashboard de Gestión de Ventas")
         
+        # Filtros y Botón de Excel
         c_f1, c_f2, c_f3 = st.columns(3)
         with c_f1:
             campanas = st.multiselect("Campaña", df['GES_nombre_campana_gestion'].unique(), default=df['GES_nombre_campana_gestion'].unique())
@@ -86,6 +91,7 @@ if archivo_subido:
 
         st.markdown("---")
 
+        # --- MÉTRICAS ---
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Llamados", len(df_final))
         m2.metric("Ventas Totales", df_final['es_venta'].sum()) 
@@ -95,51 +101,63 @@ if archivo_subido:
 
         st.markdown("---")
 
-        # --- NUEVO GRÁFICO DE DOBLE EJE ---
+        # --- SELECCIÓN Y GRÁFICO DINÁMICO ---
         st.subheader("Desempeño Operativo")
-        # Por defecto vendrá marcado en "Hora" como pediste
-        agrupacion_temporal = st.radio("Ver gráfico por:", ["Hora", "Día", "Semana"], horizontal=True)
         
-        resumen_temp = df_final.groupby(agrupacion_temporal).agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
-        resumen_temp[agrupacion_temporal] = resumen_temp[agrupacion_temporal].astype(str)
-
-        # Crear subplots con eje secundario activado
-        fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
-
-        # Barra de Llamados (Eje Izquierdo)
-        fig_dual.add_trace(
-            go.Bar(x=resumen_temp[agrupacion_temporal], y=resumen_temp['Llamados'], name="Llamados", marker_color='#636EFA'),
-            secondary_y=False,
-        )
-
-        # Línea de Ventas (Eje Derecho)
-        fig_dual.add_trace(
-            go.Scatter(x=resumen_temp[agrupacion_temporal], y=resumen_temp['Ventas'], name="Ventas", mode='lines+markers', marker_color='#EF553B', line=dict(width=3)),
-            secondary_y=True,
-        )
-
-        # Ajustes visuales para dejarlo limpio y corporativo
-        fig_dual.update_layout(
-            title_text=f"Volumen vs Cierres Reales (Vista por {agrupacion_temporal})",
-            paper_bgcolor="white",
-            plot_bgcolor="white",
-            hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
+        # Nuevo selector para elegir el tipo de vista
+        vista = st.radio("Selecciona el nivel de detalle:", ["Resumen General por Día", "Detalle por Hora (Filtrar por Día)"], horizontal=True)
         
-        # Ocultar las líneas de cuadrícula para que no se vea desordenado
-        fig_dual.update_yaxes(title_text="Volumen Llamados", secondary_y=False, showgrid=False)
-        fig_dual.update_yaxes(title_text="Total Ventas", secondary_y=True, showgrid=False)
+        fig_barras = None
+        resumen_temp = None
 
-        st.plotly_chart(fig_dual, use_container_width=True)
-        # ------------------------------------
+        if vista == "Resumen General por Día":
+            resumen_temp = df_final.groupby('Día').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
+            resumen_temp['Día'] = resumen_temp['Día'].astype(str)
+            
+            fig_barras = px.bar(resumen_temp, x='Día', y=['Llamados', 'Ventas'], 
+                                barmode='group', title="Llamados vs Ventas Totales por Día",
+                                labels={'value': 'Cantidad', 'Día': 'Fecha'},
+                                color_discrete_sequence=['#636EFA', '#EF553B'])
+            
+        else: # Si selecciona "Detalle por Hora"
+            dias_disponibles = sorted(df_final['Día'].unique())
+            
+            if len(dias_disponibles) > 0:
+                # Menú desplegable para elegir el día exacto
+                dia_seleccionado = st.selectbox("📅 Selecciona un día específico:", dias_disponibles)
+                
+                # Filtramos la data solo para el día que se seleccionó
+                df_dia = df_final[df_final['Día'] == dia_seleccionado]
+                
+                # Agrupamos por hora
+                resumen_temp = df_dia.groupby('Hora').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
+                resumen_temp['Hora'] = resumen_temp['Hora'].astype(str) + ":00" # Formato bonito "09:00"
+                
+                fig_barras = px.bar(resumen_temp, x='Hora', y=['Llamados', 'Ventas'], 
+                                    barmode='group', title=f"Desempeño por Hora (Día: {dia_seleccionado})",
+                                    labels={'value': 'Cantidad', 'Hora': 'Hora del Día'},
+                                    color_discrete_sequence=['#636EFA', '#EF553B'])
+            else:
+                st.warning("No hay datos disponibles para la selección actual.")
 
+        # Dibujamos el gráfico si existe
+        if fig_barras is not None:
+            fig_barras.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+            st.plotly_chart(fig_barras, use_container_width=True)
+
+
+        # --- TABLA DE DETALLE ---
         st.subheader("Detalle de Conversión por Ejecutivo")
-        ranking = df_final.groupby('GES_username_recurso').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
+        ranking = df_final.groupby('GES_username_recurso').agg(
+            Llamados=('es_venta', 'count'),
+            Ventas=('es_venta', 'sum')
+        ).reset_index()
         ranking['Eficiencia %'] = (ranking['Ventas'] / ranking['Llamados'] * 100).round(2)
         ranking = ranking.sort_values(by='Ventas', ascending=False)
+        
         st.dataframe(ranking, use_container_width=True, hide_index=True)
 
+        # --- CONCLUSIONES AUTOMÁTICAS ---
         st.markdown("---")
         st.subheader("📝 Diagnóstico Rápido")
         for camp in campanas:
@@ -150,6 +168,7 @@ if archivo_subido:
                 mejor_ejecutivo = df_camp.groupby('GES_username_recurso')['es_venta'].sum().idxmax() if t_ventas > 0 else "N/A"
                 st.info(f"**Campaña {camp}:** {t_llamados} llamados generaron {t_ventas} ventas. Ejecutivo con más cierres: {mejor_ejecutivo}.")
 
+        # --- CHAT GEMINI ---
         st.markdown("---")
         st.subheader("🤖 Consultar a Gemini")
         if ia_activa:
@@ -158,17 +177,22 @@ if archivo_subido:
                 with st.chat_message("user"):
                     st.write(pregunta)
                 
-                contexto = f"Datos actuales: \n{resumen_temp.to_string()}\nRanking: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
+                # Contexto dinámico
+                if resumen_temp is not None:
+                    contexto = f"Datos del gráfico en pantalla: \n{resumen_temp.to_string()}\nRanking Ejecutivos: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
+                else:
+                    contexto = f"Ranking Ejecutivos: \n{ranking.head(10).to_string()}\nPregunta: {pregunta}"
                 
                 with st.chat_message("assistant"):
                     try:
-                        modelo = genai.GenerativeModel('gemini-1.5-flash')
+                        # CORRECCIÓN DE ERROR 404: Se cambió a gemini-pro
+                        modelo = genai.GenerativeModel('gemini-pro')
                         respuesta = modelo.generate_content(contexto)
                         st.write(respuesta.text)
                     except Exception as e:
                         st.error(f"Error conectando con Gemini: {e}")
         else:
-            st.warning("La IA no está configurada. Contacta al administrador del sistema para agregar la API Key.")
+            st.warning("Ingresa tu API Key en la configuración para usar el chat.")
 
 else:
     st.title("📊 Dashboard de Gestión BCI")
