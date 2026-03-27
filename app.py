@@ -4,13 +4,14 @@ import plotly.express as px
 from io import BytesIO
 import google.generativeai as genai
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Dashboard Recaall con IA", layout="wide")
+# --- CONFIGURACIÓN DE PÁGINA Y ESTILOS ---
+st.set_page_config(page_title="Recaall Operations Analytics", layout="wide")
 
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: #ffffff; }
     div[data-testid="stMetricValue"] { color: #00ff88; }
+    .stDataFrame { border: 1px solid #30363d; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -20,30 +21,29 @@ def procesar_datos(file):
     try:
         df = pd.read_csv(file, sep=';')
         
-        # Limpieza y creación de variables temporales
+        # Limpieza de tiempos y creación de columnas temporales
         df['datetime'] = pd.to_datetime(df['GES_fecha_creacion'] + ' ' + df['GES_hora_min_creacion'], dayfirst=True)
         df['Hora'] = df['datetime'].dt.hour
         df['Día'] = df['datetime'].dt.date
-        # ISO week para la semana del año
-        df['Semana'] = df['datetime'].dt.isocalendar().week 
+        df['Semana'] = df['datetime'].dt.isocalendar().week
         
-        # NUEVA LÓGICA DE VENTA: Solo considera "venta" en GES_descripcion_3
-        # Usamos fillna('') para evitar errores con celdas vacías y str.contains para ser flexibles con mayúsculas/minúsculas
+        # REGLA: Venta solo desde GES_descripcion_3
         df['es_venta'] = df['GES_descripcion_3'].fillna('').str.lower().str.contains('venta').astype(int)
         
         return df
     except Exception as e:
-        st.error(f"Error procesando el archivo: {e}")
+        st.error(f"Error en el formato: {e}")
         return None
 
-# --- SIDEBAR Y CARGA ---
+# --- SIDEBAR (Apartado de Carga y Configuración IA) ---
 with st.sidebar:
-    st.header("📂 Panel y Datos")
-    archivo_subido = st.file_uploader("Cargar reporte (.csv)", type=["csv"])
+    st.header("📂 Panel de Control")
+    archivo_subido = st.file_uploader("Cargar reporte BCI (.csv)", type=["csv"])
+    st.info("Sube el archivo extraído de la plataforma para actualizar el dashboard.")
     
     st.divider()
-    st.header("🤖 Configuración de IA")
-    api_key = st.text_input("Ingresa tu API Key de Gemini", type="password", help="Necesaria para consultar a la IA sobre los datos.")
+    st.header("🤖 Integración Gemini")
+    api_key = st.text_input("Ingresa tu API Key de Gemini", type="password")
     if api_key:
         genai.configure(api_key=api_key)
 
@@ -52,96 +52,135 @@ if archivo_subido:
     df = procesar_datos(archivo_subido)
     
     if df is not None:
-        st.title("📈 Análisis de Campañas Recaall")
+        st.title("📈 Análisis de Conversión Recaall")
         
-        # --- FILTROS ---
-        c_f1, c_f2 = st.columns(2)
+        # Filtros Superiores y Botón de Descarga
+        c_f1, c_f2, c_f3 = st.columns(3)
         with c_f1:
             campanas = st.multiselect("Campaña", df['GES_nombre_campana_gestion'].unique(), default=df['GES_nombre_campana_gestion'].unique())
         with c_f2:
             ejecutivos = st.multiselect("Ejecutivo", df['GES_username_recurso'].unique())
-        
-        df_final = df[df['GES_nombre_campana_gestion'].isin(campanas)]
-        if ejecutivos:
-            df_final = df_final[df_final['GES_username_recurso'].isin(ejecutivos)]
-
-        # --- MÉTRICAS ---
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Gestiones", f"{len(df_final):,}")
-        m2.metric("Ventas Confirmadas", f"{df_final['es_venta'].sum():,}")
-        conversion = (df_final['es_venta'].sum()/len(df_final)*100) if len(df_final)>0 else 0
-        m3.metric("% Conversión", f"{conversion:.2f}%")
+        with c_f3:
+            df_final = df[df['GES_nombre_campana_gestion'].isin(campanas)]
+            if ejecutivos:
+                df_final = df_final[df_final['GES_username_recurso'].isin(ejecutivos)]
+            
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_final.to_excel(writer, index=False, sheet_name='Reporte_Filtrado')
+            
+            st.download_button(
+                label="📥 Descargar Selección (Excel)",
+                data=output.getvalue(),
+                file_name="reporte_filtrado_recaall.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
         st.markdown("---")
 
-        # --- ANÁLISIS TEMPORAL DINÁMICO ---
-        st.subheader("Tendencias de Venta")
-        agrupacion = st.radio("Agrupar vista por:", ["Hora", "Día", "Semana"], horizontal=True)
+        # Métricas de Impacto
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Gestiones", len(df_final))
+        m2.metric("Ventas Totales", df_final['es_venta'].sum())
+        m3.metric("% Conversión", f"{(df_final['es_venta'].sum()/len(df_final)*100 if len(df_final)>0 else 0):.2f}%")
+        m4.metric("Ejecutivos Activos", df_final['GES_username_recurso'].nunique())
+
+        st.markdown("---")
+
+        # --- NUEVO: VISTA DE GRÁFICO POR DÍA (TENDENCIA) ---
+        st.subheader("📅 Evolución Diaria de Resultados")
+        tendencia_diaria = df_final.groupby('Día').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
         
-        resumen_temp = df_final.groupby(agrupacion).agg(
-            Gestiones=('es_venta', 'count'), 
-            Ventas=('es_venta', 'sum')
-        ).reset_index()
+        fig_linea = px.line(tendencia_diaria, x='Día', y=['Llamados', 'Ventas'], 
+                            markers=True, template="plotly_dark",
+                            color_discrete_map={'Llamados': '#4169E1', 'Ventas': '#00FF7F'},
+                            labels={'value': 'Volumen', 'variable': 'Métrica'})
+        
+        # Ajustes visuales para que se vea más elegante
+        fig_linea.update_layout(hovermode="x unified", xaxis_title="Fecha de Gestión", yaxis_title="Cantidad")
+        st.plotly_chart(fig_linea, use_container_width=True)
 
-        fig_temp = px.line(resumen_temp, x=agrupacion, y=['Gestiones', 'Ventas'], 
-                         markers=True, template="plotly_dark",
-                         color_discrete_map={'Gestiones': '#4169E1', 'Ventas': '#00FF7F'})
-        st.plotly_chart(fig_temp, use_container_width=True)
 
-        # --- CONCLUSIONES POR CAMPAÑA ---
+        # --- OTROS GRÁFICOS DINÁMICOS ---
+        st.markdown("### 📊 Distribución y Fugas")
+        col_g1, col_g2 = st.columns([2, 1])
+
+        with col_g1:
+            st.markdown("#### Concentración Operativa")
+            agrupacion_temporal = st.radio("Analizar concentración por:", ["Hora", "Semana"], horizontal=True)
+            
+            resumen_temp = df_final.groupby(agrupacion_temporal).agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
+            resumen_temp[agrupacion_temporal] = resumen_temp[agrupacion_temporal].astype(str) 
+            
+            fig_bar = px.bar(resumen_temp, x=agrupacion_temporal, y=['Llamados', 'Ventas'], 
+                             barmode='group', template="plotly_dark",
+                             color_discrete_sequence=['#4169E1', '#00FF7F'],
+                             labels={'value': 'Cantidad', 'variable': 'Tipo'})
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        with col_g2:
+            st.markdown("#### Motivos No Venta")
+            motivos = df_final[df_final['es_venta'] == 0]['GES_descripcion_2'].value_counts().head(6)
+            fig_pie = px.pie(values=motivos.values, names=motivos.index, hole=.4, template="plotly_dark")
+            fig_pie.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        # Análisis y Conclusiones Automáticas
         st.markdown("---")
         st.subheader("📝 Análisis y Conclusiones por Campaña")
-        
         for camp in campanas:
             df_camp = df_final[df_final['GES_nombre_campana_gestion'] == camp]
-            if len(df_camp) > 0:
+            if not df_camp.empty:
                 t_llamados = len(df_camp)
                 t_ventas = df_camp['es_venta'].sum()
-                t_conv = (t_ventas / t_llamados * 100)
-                mejor_ejecutivo = df_camp.groupby('GES_username_recurso')['es_venta'].sum().idxmax()
-                max_ventas_ejec = df_camp.groupby('GES_username_recurso')['es_venta'].sum().max()
+                t_conv = (t_ventas / t_llamados * 100) if t_llamados > 0 else 0
+                mejor_ejecutivo = df_camp.groupby('GES_username_recurso')['es_venta'].sum().idxmax() if t_ventas > 0 else "N/A"
                 
                 st.info(f"""
-                **Campaña: {camp}**
-                * **Resumen de Esfuerzo:** Se realizaron **{t_llamados}** gestiones que resultaron en **{t_ventas}** ventas, logrando una efectividad del **{t_conv:.2f}%**.
-                * **Rendimiento Humano:** El ejecutivo con mayor cantidad de cierres fue **{mejor_ejecutivo}** con {max_ventas_ejec} ventas.
-                * **Diagnóstico:** {'La campaña muestra una conversión saludable.' if t_conv > 1.5 else 'Se detecta un alto volumen de gestiones con bajo cierre. Sugiere revisar los motivos de caída (GES_descripcion_2) o calibrar los guiones.'}
+                **{camp}:** Se registraron **{t_llamados}** gestiones y **{t_ventas}** ventas, logrando una conversión de **{t_conv:.2f}%**. 
+                Ejecutivo destacado en volumen de ventas: **{mejor_ejecutivo}**.
                 """)
 
-        # --- ASISTENTE IA (GEMINI) ---
-        st.markdown("---")
-        st.subheader("🤖 Consultor de IA Integrado")
-        st.caption("Pregúntale a Gemini sobre los resultados actuales del dashboard.")
+        # Tabla detallada por ejecutivo
+        st.subheader("Detalle por Ejecutivo")
+        ranking = df_final.groupby('GES_username_recurso').agg(
+            Contactos=('es_venta', 'count'),
+            Ventas=('es_venta', 'sum')
+        ).sort_values(by='Ventas', ascending=False)
+        st.table(ranking.head(10))
 
+        # Apartado IA
+        st.markdown("---")
+        st.subheader("🤖 Consultar a Gemini")
+        st.caption("Pregunta sobre los indicadores, días clave o rendimiento de ejecutivos en pantalla.")
+        
         if api_key:
-            pregunta = st.chat_input("Ej: ¿Qué campaña tiene el mejor rendimiento y por qué?")
+            pregunta = st.chat_input("Escribe tu consulta analítica aquí...")
             if pregunta:
-                # Mostrar el mensaje del usuario
                 with st.chat_message("user"):
                     st.write(pregunta)
                 
-                # Crear un resumen de los datos filtrados para darle contexto a la IA
-                contexto_datos = resumen_temp.to_string()
-                resumen_ejecutivos = df_final.groupby('GES_username_recurso').agg(Ventas=('es_venta', 'sum'), Contactos=('es_venta', 'count')).to_string()
-                
-                prompt_ia = f"""
-                Eres un analista de datos experto. Responde a la pregunta del usuario basándote EXCLUSIVAMENTE en el siguiente resumen de datos de un call center.
-                Datos temporales:\n{contexto_datos}\n
-                Datos por ejecutivo:\n{resumen_ejecutivos}\n
-                Pregunta del usuario: {pregunta}
+                contexto = f"""
+                Responde de forma ejecutiva como experto en recursos humanos y análisis de datos. 
+                Datos actuales filtrados:
+                {resumen_temp.to_string()}
+                Rendimiento de ejecutivos (Top 10):
+                {ranking.head(10).to_string()}
+                Pregunta: {pregunta}
                 """
                 
-                # Generar y mostrar respuesta
                 with st.chat_message("assistant"):
                     try:
                         modelo = genai.GenerativeModel('gemini-1.5-flash')
-                        respuesta = modelo.generate_content(prompt_ia)
+                        respuesta = modelo.generate_content(contexto)
                         st.write(respuesta.text)
                     except Exception as e:
-                        st.error(f"Error al conectar con Gemini: {e}")
+                        st.error(f"Hubo un error al consultar a Gemini: {e}")
         else:
-            st.warning("Introduce tu API Key de Gemini en el panel lateral para activar el chat.")
+            st.warning("Introduce tu API Key en la barra lateral para habilitar el análisis conversacional.")
 
 else:
-    st.title("💼 Analítica Avanzada Recaall")
-    st.info("Sube tu archivo CSV en la barra lateral para comenzar.")
+    # Pantalla inicial
+    st.title("💼 Dashboard Recaall SpA")
+    st.warning("Esperando carga de datos... Por favor, utiliza el panel lateral para subir el archivo CSV.")
+    st.image("https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&q=80&w=1000", caption="Análisis Operativo", width=700)
