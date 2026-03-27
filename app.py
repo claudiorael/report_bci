@@ -190,12 +190,16 @@ if archivo_subido:
                 color='Estado',
                 color_discrete_map={'Contacto Efectivo': '#636EFA', 'Sin Contacto / Otros': '#CED4DA'}
             )
-            fig_pie_cont.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5), paper_bgcolor="white", plot_bgcolor="white", margin=dict(t=30, b=0, l=0, r=0))
+            fig_pie_cont.update_layout(
+                showlegend=True, 
+                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
+                paper_bgcolor="white", plot_bgcolor="white", margin=dict(t=30, b=0, l=0, r=0)
+            )
             fig_pie_cont.add_annotation(text=f"{tasa_cont:.1f}%", x=0.5, y=0.5, showarrow=False, font_size=20, font_color='#212529')
             st.plotly_chart(fig_pie_cont, use_container_width=True)
 
         with col_fuga2:
-            # Top Motivos No Venta
+            # Top Motivos No Venta (Sin la apertura de No Conecta)
             if not df_no_ventas.empty:
                 motivos_nv = df_no_ventas['GES_descripcion_2'].fillna('Sin Especificar').value_counts().reset_index().head(10)
                 motivos_nv.columns = ['Motivo', 'Cantidad']
@@ -213,7 +217,10 @@ if archivo_subido:
         st.markdown("---")
         st.subheader("👨‍💼 Análisis de Rendimiento de Ejecutivos")
         
-        ranking = df_final.groupby('GES_username_recurso').agg(Llamados=('es_venta', 'count'), Ventas=('es_venta', 'sum')).reset_index()
+        ranking = df_final.groupby('GES_username_recurso').agg(
+            Llamados=('es_venta', 'count'),
+            Ventas=('es_venta', 'sum')
+        ).reset_index()
         ranking['Eficiencia %'] = (ranking['Ventas'] / ranking['Llamados'] * 100).round(2)
         ranking = ranking.sort_values(by='Ventas', ascending=False)
         
@@ -229,7 +236,7 @@ if archivo_subido:
 
         st.dataframe(ranking, use_container_width=True, hide_index=True)
 
-        # --- CHAT GEMINI ---
+        # --- CHAT GEMINI CON VISOR DE ERRORES REALES ---
         st.markdown("---")
         st.subheader("🤖 Consultar a Gemini")
         if ia_activa:
@@ -242,12 +249,12 @@ if archivo_subido:
                 
                 with st.chat_message("assistant"):
                     try:
-                        # Utilizamos la versión estable para evitar fallos 404
-                        modelo = genai.GenerativeModel('gemini-1.5-flash')
+                        # SOLUCIÓN DEFINITIVA AL ERROR 404: Cambiado a gemini-pro
+                        modelo = genai.GenerativeModel('gemini-pro')
                         respuesta = modelo.generate_content(contexto)
                         st.write(respuesta.text)
                     except Exception as e:
-                        st.error(f"🚨 ERROR: {str(e)}\n\n👉 PARA SOLUCIONARLO: Asegúrate de que tu archivo requirements.txt en GitHub diga exactamente: google-generativeai>=0.5.0")
+                        st.error(f"🚨 DETALLE TÉCNICO DEL ERROR: {str(e)}")
         else:
             st.warning("⚠️ La IA no está conectada. Revisa los 'Secrets' en Streamlit Cloud.")
 
